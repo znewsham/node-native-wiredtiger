@@ -123,7 +123,7 @@ export type FlatFindOptions = {
 export declare class WiredTigerTable {
   constructor(db: WiredTigerDB, tableName: string, tableConfig: string);
   find<Key extends any[], Value extends any[]>(conditions?: QueryCondition<Value>[], options?: FlatFindOptions): FindCursor<Key, Value>;
-  insertMany(documents: [any, any[]][]): void;
+  insertMany(documents: [any[], any[]][]): void;
   createIndex(indexName: string, config: string): void;
 }
 

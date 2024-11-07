@@ -42,54 +42,65 @@ using namespace std;
 #define EMPTY_CONDITIONS (ERROR_BASE | 11)
 
 namespace wiredtiger {
+  inline bool FieldIsPtr(char field) {
+    return field == FIELD_WT_ITEM || field == FIELD_WT_UITEM || field == FIELD_WT_ITEM_DOUBLE || field == FIELD_WT_ITEM_BIGINT || field == FIELD_CHAR_ARRAY || field == FIELD_STRING;
+  }
   template <class T> struct ErrorAndResult {
     int error;
     T value;
   };
 
-  typedef struct DataPointersAndSize {
-    size_t size;
-    std::vector<std::string> keys;
-  } DataPointersAndSize;
 
-
+  typedef union QueryValueValue {
+    void* valuePtr/* = NULL*/;
+    uint64_t valueUint;
+  } QueryValueValue;
   typedef struct QueryValue {
     char dataType;
-    void* value/* = NULL*/;
+    QueryValueValue value;
     size_t size;
     bool noFree/* = false*/;
   } QueryValue;
 
-  typedef struct KVPair {
-    QueryValue key;
-    std::vector<QueryValue> values;
-  } KVPair;
-
-  typedef struct QueryCondition {
-    char* index;
-    uint8_t operation;
-    std::vector<QueryCondition> subConditions;
-    std::vector<QueryValue> values;
-  } QueryCondition;
-
-  typedef struct Entry {
-    std::vector<QueryValue>keys;
-    std::vector<QueryValue>values;
-    void* keyBuffer;
-    void* valueBuffer;
-  } Entry;
-
   typedef union QueryValueOrWT_ITEM {
+    ~QueryValueOrWT_ITEM() {
+      if (FieldIsPtr(queryValue.dataType)) {
+        if (!queryValue.noFree && queryValue.value.valuePtr != NULL) {
+          free(queryValue.value.valuePtr);
+        }
+      }
+    }
     QueryValue queryValue;
     WT_ITEM wtItem;
   } QueryValueOrWT_ITEM;
 
-  typedef struct EntryOfPointers {
-    QueryValueOrWT_ITEM* keyArray;
-    size_t keySize;
-    QueryValueOrWT_ITEM* valueArray;
-    size_t valueSize;
-  } EntryOfPointers;
+  typedef struct QueryCondition {
+    ~QueryCondition() {
+      if (subConditions != NULL) {
+        delete subConditions;
+      }
+      if (values != NULL) {
+        delete values;
+      }
+    }
+    char* index;
+    uint8_t operation;
+    std::vector<QueryCondition>* subConditions = NULL;
+    std::vector<QueryValueOrWT_ITEM>* values = NULL;
+  } QueryCondition;
+
+  typedef struct EntryOfVectors {
+    ~EntryOfVectors() {
+      if (keyArray != NULL) {
+        delete keyArray;
+      }
+      if (valueArray != NULL) {
+        delete valueArray;
+      }
+    }
+    std::vector<QueryValueOrWT_ITEM>* keyArray;
+    std::vector<QueryValueOrWT_ITEM>* valueArray;
+  } EntryOfVectors;
   typedef struct Format {
     char format;
     size_t size;

@@ -67,7 +67,7 @@ int populateArrayItem(
   Isolate* isolate,
   Local<Array> items,
   int v,
-  void* value,
+  QueryValueValue value,
   char format,
   size_t size
 ) {
@@ -83,14 +83,14 @@ int populateArrayItem(
       items->Set(
         isolate->GetCurrentContext(),
         v,
-        NewLatin1String(isolate, (char*)value, min(strlen((char*)value), size))
+        NewLatin1String(isolate, (char*)value.valuePtr, min(strlen((char*)value.valuePtr), size))
       ).Check();
     }
     else {
       items->Set(
         isolate->GetCurrentContext(),
         v,
-        NewLatin1String(isolate, (char*)value)
+        NewLatin1String(isolate, (char*)value.valuePtr)
       ).Check();
     }
   }
@@ -98,75 +98,75 @@ int populateArrayItem(
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      NewLatin1String(isolate, (char*)value, min(strlen((char*)value), size))
+      NewLatin1String(isolate, (char*)value.valuePtr, min(strlen((char*)value.valuePtr), size))
     ).Check();
   }
   else if (format == FIELD_INT || format == FIELD_INT2) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Int32::New(isolate, (int32_t)(uint64_t)value)
+      Int32::New(isolate, (int32_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_UINT || format == FIELD_UINT2) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, (uint32_t)(uint64_t)value)
+      Uint32::New(isolate, (uint32_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_HALF) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, (uint16_t)(uint64_t)value)
+      Uint32::New(isolate, (uint16_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_UHALF) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, (int16_t)(uint64_t)value)
+      Uint32::New(isolate, (int16_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_UBYTE) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, (uint8_t)(uint64_t)value)
+      Uint32::New(isolate, (uint8_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_BYTE) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, (int8_t)(uint64_t)value)
+      Uint32::New(isolate, (int8_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_ULONG || format == FIELD_RECID) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      BigInt::New(isolate, (uint64_t)value)
+      BigInt::New(isolate, value.valueUint)
     ).Check();
   }
   else if (format == FIELD_LONG) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      BigInt::New(isolate, (int64_t)value)
+      BigInt::New(isolate, (int64_t)value.valueUint)
     ).Check();
   }
   else if (format == FIELD_WT_ITEM) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Nan::CopyBuffer((const char*)value, size).ToLocalChecked()
+      Nan::CopyBuffer((const char*)value.valuePtr, size).ToLocalChecked()
     ).Check();
   }
   else if (format == FIELD_WT_ITEM_DOUBLE) {
     double doubleValue;
-    wiredtiger::byteArrayToDouble((uint8_t*)value, &doubleValue);
+    wiredtiger::byteArrayToDouble((uint8_t*)value.valuePtr, &doubleValue);
     items->Set(
       isolate->GetCurrentContext(),
       v,
@@ -174,7 +174,7 @@ int populateArrayItem(
     ).Check();
   }
   else if (format == FIELD_WT_ITEM_BIGINT) {
-    uint8_t* bytes = (uint8_t*)value;
+    uint8_t* bytes = (uint8_t*)value.valuePtr;
     wiredtiger::unmakeBigIntByteArraySortable(size, bytes);
     items->Set(
       isolate->GetCurrentContext(),
@@ -186,14 +186,14 @@ int populateArrayItem(
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Uint32::New(isolate, ((uint64_t)value))
+      Uint32::New(isolate, ((uint64_t)value.valueUint))
     ).Check();
   }
   else if (format == FIELD_BOOLEAN) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      Boolean::New(isolate, ((uint64_t)value) == 1)
+      Boolean::New(isolate, ((uint64_t)value.valueUint) == 1)
     ).Check();
   }
   else {
@@ -216,6 +216,18 @@ int populateArray(
   return 0;
 }
 
+int populateArray(
+  Isolate* isolate,
+  Local<Array> items,
+  std::vector<QueryValueOrWT_ITEM>* values
+) {
+  for (size_t v = 0; v < values->size(); v++) {
+    QueryValueOrWT_ITEM& qv = (*values)[v];
+    RETURN_IF_ERROR(populateArrayItem(isolate, items, v, qv.queryValue.value, qv.queryValue.dataType, qv.queryValue.size));
+  }
+  return 0;
+}
+
 #define SET_VALUE_SIZE_FORMAT_AND_RETURN() {converted->value = value; converted->size = size; converted->dataType = format.format; return 0;}
 #define SET_VALUE_PTR_SIZE_FORMAT_AND_RETURN() {converted->value = *valueOut; converted->size = size; converted->dataType = format.format; return 0;}
 
@@ -223,25 +235,23 @@ int populateArray(
 template <typename b, typename h, typename i, typename LocalInt>
 int extractNumber(
   Local<Value> valueIn,
-  void** valueOut,
   Format format,
   QueryValue* converted
 ) {
-  size_t size;
   if (format.format == FIELD_INT || format.format == FIELD_INT2 || format.format == FIELD_UINT || format.format == FIELD_UINT2) {
-    size = sizeof(i);
-    *valueOut = (void*)(i)(Local<LocalInt>::Cast(valueIn))->Value();
-    SET_VALUE_PTR_SIZE_FORMAT_AND_RETURN();
+    converted->size = sizeof(i);
+    converted->value.valueUint = (uint64_t)(i)(Local<LocalInt>::Cast(valueIn))->Value();
+    return 0;
   }
   else if (format.format == FIELD_HALF || format.format == FIELD_UHALF) {
-    size = sizeof(h);
-    *valueOut = (void*)(h)(Local<LocalInt>::Cast(valueIn))->Value();
-    SET_VALUE_PTR_SIZE_FORMAT_AND_RETURN();
+    converted->size = sizeof(h);
+    converted->value.valueUint = (uint64_t)(h)(Local<LocalInt>::Cast(valueIn))->Value();
+    return 0;
   }
   else if (format.format == FIELD_BYTE || format.format == FIELD_UBYTE) {
-    size = sizeof(b);
-    *valueOut = (void*)(b)(Local<LocalInt>::Cast(valueIn))->Value();
-    SET_VALUE_PTR_SIZE_FORMAT_AND_RETURN();
+    converted->size = sizeof(b);
+    converted->value.valueUint = (uint64_t)(b)(Local<LocalInt>::Cast(valueIn))->Value();
+    return 0;
   }
   return INVALID_VALUE_TYPE;
 }
@@ -256,25 +266,26 @@ int extractValue(
   // most interesting are "u" and "l/L"
   // - l/L could take (U)Int32, or could take a bigint
   // - u could take a Buffer or a number. If it's a number we treat it as a float64
-  void* value = NULL;
+  QueryValueValue value;
+  value.valuePtr = NULL;
   size_t size = -1;
   switch(format.format) {
     case FIELD_BITFIELD:
       if (val->IsInt32()) {
         size = sizeof(uint8_t);
         // value = malloc(size);// freed on cursor close/insert completion
-        value = (void*)(uint8_t)(Local<Int32>::Cast(val))->Value();
+        value.valueUint = (uint8_t)(Local<Int32>::Cast(val))->Value();
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsUint32()) {
         size = sizeof(uint8_t);
         // value = malloc(size);// freed on cursor close/insert completion
-        value = (void*)(uint8_t)(Local<Uint32>::Cast(val))->Value();
+        value.valueUint = (uint8_t)(Local<Uint32>::Cast(val))->Value();
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsBoolean()) {
         size = sizeof(uint8_t);
-        value = (void*)(uint8_t)val->BooleanValue(isolate);
+        value.valueUint = (uint8_t)val->BooleanValue(isolate);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       return INVALID_VALUE_TYPE;
@@ -283,19 +294,19 @@ int extractValue(
     case FIELD_ULONG:
       if (val->IsInt32()) {
         size = sizeof(uint64_t);
-        value = (void*)(uint64_t)(Local<Int32>::Cast(val))->Value();
+        value.valueUint = (uint64_t)(Local<Int32>::Cast(val))->Value();
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsUint32()) {
         size = sizeof(uint64_t);
-        value = (void*)(uint64_t)(Local<Uint32>::Cast(val))->Value();
+        value.valueUint = (uint64_t)(Local<Uint32>::Cast(val))->Value();
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsBigInt()) {
         int sign_bit;
         int word_count = 1;
-        value = (int64_t*)calloc(sizeof(int64_t), 1);
-        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value);
+        value.valuePtr = (int64_t*)calloc(sizeof(int64_t), 1);
+        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value.valuePtr);
         size = sizeof(uint64_t);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
@@ -303,21 +314,21 @@ int extractValue(
     case FIELD_LONG:
       if (val->IsInt32()) {
         size = sizeof(int64_t);
-        value = (void*)(int64_t)(Local<Int32>::Cast(val))->Value();
+        value.valueUint = (int64_t)(Local<Int32>::Cast(val))->Value();
 
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsUint32()) {
         size = sizeof(int64_t);
-        value = (void*)(int64_t)(Local<Uint32>::Cast(val))->Value();
+        value.valueUint = (int64_t)(Local<Uint32>::Cast(val))->Value();
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (val->IsBigInt()) {
         int sign_bit;
         int word_count = 1;
-        value = (int64_t*)calloc(sizeof(int64_t), 1);
-        int64_t* longValue = (int64_t*)value;
-        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value);
+        value.valuePtr = (int64_t*)calloc(sizeof(int64_t), 1);
+        int64_t* longValue = (int64_t*)value.valuePtr;
+        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value.valuePtr);
         if (sign_bit == 1) {
           *longValue = *longValue | 0x8000000000000000;
         }
@@ -338,7 +349,7 @@ int extractValue(
         (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)(bytes + 1));
         *bytes = sign_bit;
         // TODO: sign flip?
-        value = (uint8_t*)bytes;
+        value.valuePtr = (uint8_t*)bytes;
         size = (word_count * 8) + 1;
         wiredtiger::makeBigIntByteArraySortable(size, bytes);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
@@ -346,12 +357,12 @@ int extractValue(
       if (val->IsNumber()) {
         uint8_t* buffer = (uint8_t*)calloc(sizeof(uint8_t), 8);
         wiredtiger::doubleToByteArray(Local<Number>::Cast(val)->Value(), buffer);
-        value = (void*)buffer;
+        value.valuePtr = (void*)buffer;
         size = 8;
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       if (node::Buffer::HasInstance(val)) {
-        value = (void*)node::Buffer::Data(val);
+        value.valuePtr = (void*)node::Buffer::Data(val);
         size = node::Buffer::Length(val);
         converted->noFree = true;
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
@@ -363,10 +374,9 @@ int extractValue(
       if (val->IsString()) {
         Local<String> string = Local<String>::Cast(val);
         int length = string->Length();
-        value = malloc(length + 1);// freed on cursor close/insert completion
-        bzero(value, length + 1);
+        value.valuePtr = calloc(sizeof(char), length + 1);// freed on cursor close/insert completion
         size = length;
-        StringToCharPointer(isolate, string, (char*)value);
+        StringToCharPointer(isolate, string, (char*)value.valuePtr);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       return INVALID_VALUE_TYPE;
@@ -379,10 +389,10 @@ int extractValue(
         return INVALID_VALUE_TYPE;
       }
       if (val->IsInt32()) {
-        return extractNumber<int8_t, int16_t, int32_t, Int32>(val, &value, format, converted);
+        return extractNumber<int8_t, int16_t, int32_t, Int32>(val, format, converted);
       }
       if (val->IsUint32()) {
-        return extractNumber<int8_t, int16_t, int32_t, Uint32>(val, &value, format, converted);
+        return extractNumber<int8_t, int16_t, int32_t, Uint32>(val, format, converted);
       }
       return INVALID_VALUE_TYPE;
     case FIELD_UBYTE:
@@ -393,10 +403,10 @@ int extractValue(
         return INVALID_VALUE_TYPE;
       }
       if (val->IsInt32()) {
-        return extractNumber<uint8_t, uint16_t, uint32_t, Int32>(val, &value, format, converted);
+        return extractNumber<uint8_t, uint16_t, uint32_t, Int32>(val, format, converted);
       }
       if (val->IsUint32()) {
-        return extractNumber<uint8_t, uint16_t, uint32_t, Uint32>(val, &value, format, converted);
+        return extractNumber<uint8_t, uint16_t, uint32_t, Uint32>(val, format, converted);
       }
       return INVALID_VALUE_TYPE;
     default:
@@ -409,14 +419,12 @@ int extractValues(
   Local<Array> values,
   Isolate* isolate,
   Local<Context> context,
-  std::vector<QueryValue> *convertedValues,
+  std::vector<QueryValueOrWT_ITEM> *convertedValues,
   std::vector<Format>* formats
 ) {
   for (uint32_t a = 0; a < values->Length(); a++) {
     Local<Value> val = values->Get(context, a).ToLocalChecked();
-    QueryValue converted;
-    RETURN_IF_ERROR(extractValue(val, isolate, &converted, formats->at(a)));
-    convertedValues->push_back(converted);
+    RETURN_IF_ERROR(extractValue(val, isolate, &(*convertedValues)[a].queryValue, formats->at(a)));
   }
   return 0;
 }
@@ -430,7 +438,6 @@ int parseConditions(
 ) {
   Local<Array> conditionSpecs = *conditionSpecsPointer;
   for (uint32_t i = 0; i < conditionSpecs->Length(); i++) {
-    QueryCondition condition;
     Local<Value> object = conditionSpecs->Get(context, i).ToLocalChecked();
     Local<String> indexProp = NewLatin1String(isolate, "index");
     Local<String> valuesProp = NewLatin1String(isolate, "values");
@@ -464,8 +471,8 @@ int parseConditions(
       operation = operationInteger->Value();
     }
 
-    std::vector<QueryValue> conditionValues;
-    std::vector<QueryCondition> subConditions;
+    std::vector<QueryValueOrWT_ITEM>* conditionValues = NULL;
+    std::vector<QueryCondition>* subConditions = NULL;
     bool hasConditions = false;
     bool hasValues = false;
     if (conditionSpec->Has(context, conditionsProp).ToChecked()) {
@@ -481,11 +488,12 @@ int parseConditions(
       if (subConditionsArr->Length() == 0) {
         return EMPTY_CONDITIONS;
       }
+      subConditions = new std::vector<QueryCondition>(subConditionsArr->Length()); // deleted with the root conditions vector
       int ret = parseConditions(
         isolate,
         context,
         &subConditionsArr,
-        &subConditions,
+        subConditions,
         formats
       );
       if (ret != 0) {
@@ -504,28 +512,27 @@ int parseConditions(
         return VALUES_NOT_ARRAY;
       }
       Local<Array> values = Local<Array>::Cast(valuesVal);
+      conditionValues = new std::vector<QueryValueOrWT_ITEM>(values->Length()); // deleted with the root conditions vector
       if (values->Length() == 0) {
         return EMPTY_VALUES;
       }
       hasValues = true;
-
+      conditionValues->reserve(values->Length());
       RETURN_IF_ERROR(extractValues(
         values,
         isolate,
         context,
-        &conditionValues,
+        conditionValues,
         formats
       ));
     }
     if (!hasValues && !hasConditions && operation != OPERATION_INDEX) {
       return NO_VALUES_OR_CONDITIONS;
     }
-    conditions->push_back(QueryCondition {
-      index,
-      operation,
-      subConditions,
-      conditionValues
-    });
+    (*conditions)[i].index = index;
+    (*conditions)[i].operation = operation;
+    (*conditions)[i].subConditions = subConditions;
+    (*conditions)[i].values = conditionValues;
   }
   return 0;
 }

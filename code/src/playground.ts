@@ -208,7 +208,7 @@ col.insertOne({
 //   count++;
 // }
 // console.log("Found: ", count);
-
+console.log("STARTED FIND");
 const cursor = col.find([
   {
     operation: Operation.AND,
@@ -217,7 +217,8 @@ const cursor = col.find([
       { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
     ]
   }
-], { columns: ["_id"] });
+], { columns: ["_id", "stringThing"] });
+console.log("FINISHED FIND");
 console.log(cursor.nextBatch());
 cursor.close();
 

@@ -6,6 +6,7 @@
 #include "multi_cursor.h"
 #include <string_view>
 #include <set>
+#include <memory>
 
 #include <vector>
 using namespace std;
@@ -51,7 +52,7 @@ namespace wiredtiger {
       int initCursor(); // public just for accessors? Puke.
       WiredTigerSession *session;
       Format formatAt(bool forValues, int i);
-      int nextBatch(int batchSize, std::vector<EntryOfPointers>* results);
+      int nextBatch(int batchSize, std::vector<std::unique_ptr<EntryOfVectors>>* results);
 
       const char* getUri() {
         initCursor();

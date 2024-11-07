@@ -71,30 +71,24 @@ namespace wiredtiger::binding {
     }
     if (didRequestFormat && requestedFormat.size() != that.columnCount(false)) {
       THROW(Exception::TypeError, "Incorrect column length");
-      return;
     }
 
-    size_t size;
-    QueryValueOrWT_ITEM* valueArray = that.initArray(false, &size);
-    result = that.getKey(valueArray); // after this point everything in valueArray is a QueryValue
+    size_t size = that.columnCount(false);
+    std::vector<QueryValueOrWT_ITEM> valueArray(size);
+    result = that.getKey(&valueArray); // after this point everything in valueArray is a QueryValue
     Local<Array> retArray = Array::New(isolate, size);
     if (result == INVALID_VALUE_TYPE) {
       THROW(Exception::TypeError, "Invalid type encountered");
-      freeQueryValues(valueArray, size);
-      return;
     }
     for (size_t i = 0; i < size; i++) {
-      QueryValueOrWT_ITEM item = valueArray[i];
+      QueryValueOrWT_ITEM& item = valueArray[i];
       Format format = !didRequestFormat ? that.formatAt(false, i) : requestedFormat.at(i);
       result = populateArrayItem(isolate, retArray, i, item.queryValue.value, format.format, item.queryValue.size);
       if (result == INVALID_VALUE_TYPE) {
         THROW(Exception::TypeError, "Invalid type encountered");
-        freeQueryValues(valueArray, size);
-        return;
       }
     }
     Return(retArray, args);
-    freeQueryValues(valueArray, size);
   }
 
   void CursorGetValue(const FunctionCallbackInfo<Value>& args) {
@@ -114,15 +108,15 @@ namespace wiredtiger::binding {
       result = parseFormat(requestedFormatStr, &requestedFormat);
       free(requestedFormatStr);
     }
-    size_t size;
-    QueryValueOrWT_ITEM* valueArray = that.initArray(true, &size);
+    size_t size = that.columnCount(true);
+    std::vector<QueryValueOrWT_ITEM> valueArray(size);
     if (didRequestFormat && requestedFormat.size() != that.columnCount(true)) {
       THROW(Exception::TypeError, "Incorrect column length");
     }
-    result = that.getValue(valueArray); // after this point everything in valueArray is a QueryValue
+    result = that.getValue(&valueArray); // after this point everything in valueArray is a QueryValue
     if (result == INVALID_VALUE_TYPE) {
       THROW(Exception::TypeError, "Invalid type encountered");
-      free(valueArray);
+      // free(valueArray);
       return;
     }
     Local<Array> retArray = Array::New(isolate, size);
@@ -132,19 +126,18 @@ namespace wiredtiger::binding {
       result = populateArrayItem(isolate, retArray, i, item.queryValue.value, format.format, item.queryValue.size);
       if (result == INVALID_VALUE_TYPE) {
         THROW(Exception::TypeError, "Invalid type encountered");
-      free(valueArray);
+      // free(valueArray);
         return;
       }
     }
     Return(retArray, args);
-    freeQueryValues(valueArray, size);
+    // freeQueryValues(valueArray, size);
   }
   void CursorSetKey(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
-    Local<Context> context = isolate->GetCurrentContext();
     Cursor& that = Unwrap<Cursor>(args.Holder());
 
-    QueryValueOrWT_ITEM* values = (QueryValueOrWT_ITEM*)calloc(sizeof(QueryValueOrWT_ITEM), args.Length());// freed on reset, close or the next setKey
+    std::vector<QueryValueOrWT_ITEM> values(args.Length());
     for (int i = 0; i < args.Length(); i++) {
       int error = extractValue(
         args[i],
@@ -158,15 +151,15 @@ namespace wiredtiger::binding {
       }
     }
     // TODO: this can't be freed until after the cursor executes (e.g., insert/update/search/searchNear)
-    that.setKey(values);
+    that.setKey(&values);
     //freeQueryValues(values, args.Length());
   }
+
   void CursorSetValue(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
-    Local<Context> context = isolate->GetCurrentContext();
     Cursor& that = Unwrap<Cursor>(args.Holder());
 
-    QueryValueOrWT_ITEM* values = (QueryValueOrWT_ITEM*)calloc(sizeof(QueryValueOrWT_ITEM), args.Length()); // freed on reset, close or the next setValue
+    std::vector<QueryValueOrWT_ITEM> values(args.Length());
     for (int i = 0; i < args.Length(); i++) {
       int error = extractValue(
         args[i],
@@ -179,11 +172,9 @@ namespace wiredtiger::binding {
         return;
       }
     }
-    that.setValue(values);
+    that.setValue(&values);
   }
   void CursorSearch(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
-    Local<Context> context = isolate->GetCurrentContext();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.search();
     if (result != 0 && result != WT_NOTFOUND) {
@@ -193,8 +184,6 @@ namespace wiredtiger::binding {
     args.GetReturnValue().Set(result == WT_NOTFOUND ? false : true);
   }
   void CursorSearchNear(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
-    Local<Context> context = isolate->GetCurrentContext();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int exact;
     int result = that.searchNear(&exact);
@@ -206,7 +195,6 @@ namespace wiredtiger::binding {
   }
 
   void CursorInsert(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.insert();
     if (result) {
@@ -214,7 +202,6 @@ namespace wiredtiger::binding {
     }
   }
   void CursorUpdate(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.update();
     if (result) {
@@ -222,7 +209,6 @@ namespace wiredtiger::binding {
     }
   }
   void CursorRemove(const FunctionCallbackInfo<Value>& args) {
-    Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.remove();
     if (result) {
@@ -303,7 +289,6 @@ namespace wiredtiger::binding {
   }
 
   void CursorAccessorSession(Local<String> property, const PropertyCallbackInfo<Value> &args) {
-    Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
     Return(WiredTigerSessionGetOrCreate(that.getRawSession()), args);
   }
@@ -333,7 +318,7 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     Local<Function> fn = Deref(isolate, CursorConstructorTmpl)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
     Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
-    Cursor* cursor = new Cursor(wtCursor);
+    Cursor* cursor = new Cursor(wtCursor); // deleted on close
     obj->SetAlignedPointerInInternalField(0, cursor);
     return obj;
   }
@@ -347,7 +332,7 @@ namespace wiredtiger::binding {
 
     // TODO: handle the result
     session->open_cursor(session, uri, NULL, config, &WTCursor);
-    Cursor* cursor = new Cursor(WTCursor);
+    Cursor* cursor = new Cursor(WTCursor); // deleted on close
     obj->SetAlignedPointerInInternalField(0, cursor);
     return obj;
   }

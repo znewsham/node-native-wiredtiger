@@ -56,7 +56,7 @@ if (upper !== -1) {
 }
 let count = 0;
 while(j.next() == true){
-  console.log(j.getKey());
+  console.log(j.getKey(), j.getValue());
   count++;
 }
 console.log("Found: ", count);

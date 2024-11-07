@@ -71,17 +71,23 @@ namespace wiredtiger::binding {
     QueryValueOrWT_ITEM* values,
     size_t size
   );
+  int populateArray(
+    Isolate* isolate,
+    Local<Array> items,
+    std::vector<QueryValueOrWT_ITEM>* values
+  );
   int populateArrayItem(
     Isolate* isolate,
     Local<Array> items,
     int v,
-    void* value,
+    QueryValueValue value,
     char format,
     size_t size
   );
   int extractValue(
     Local<Value> val,
     Isolate* isolate,
+    // we're never going to extract a WT item (I don't think? Raw mode?) at least for now this saves refactoring this complex method
     QueryValue* converted,
     Format format
   );
@@ -89,7 +95,7 @@ namespace wiredtiger::binding {
     Local<Array> values,
     Isolate* isolate,
     Local<Context> context,
-    std::vector<QueryValue> *convertedValues,
+    std::vector<QueryValueOrWT_ITEM> *convertedValues,
     std::vector<Format> *formats
   );
   int parseConditions(

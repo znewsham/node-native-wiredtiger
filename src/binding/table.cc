@@ -54,7 +54,7 @@ namespace wiredtiger::binding {
       }
     }
 
-    std::vector<QueryCondition>* conditions = new std::vector<QueryCondition>();
+    std::vector<QueryCondition>* conditions;
     Local<Array> arr;
     if (args.Length() >= 1 && args[0]->IsArray()) {
       arr = Local<Array>::Cast(args[0]);
@@ -85,6 +85,7 @@ namespace wiredtiger::binding {
     findOptions.session = session;
     that.initTable(session);
 
+    conditions = new std::vector<QueryCondition>(arr->Length()); // deleted when the find cursor closes
     int result = parseConditions(isolate, context, &arr, conditions, that.getValueFormats());
     if (result != 0) {
       if (result == CONDITION_NOT_OBJECT) {
@@ -158,55 +159,62 @@ namespace wiredtiger::binding {
     Local<Array> arr = Local<Array>::Cast(args[0]);
     int error;
 
-    std::vector<KVPair> converted;
+    std::vector<std::unique_ptr<EntryOfVectors>> converted(arr->Length());
 
     WiredTigerSession* session = GetSession(that.getDb());
     for (uint32_t i = 0; i < arr->Length(); i++) {
       Local<Value> holder = arr->Get(context, i).ToLocalChecked();
       if (!holder->IsArray()) {
-        THROW(Exception::TypeError, "argument must be an array where each entry is this form [key, [value1, ...valuen]]");
+        THROW(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]");
       }
       Local<Array> kvPair = Local<Array>::Cast(holder);
-      if (kvPair->Length() != 2) {
-        THROW(Exception::TypeError, "argument must be an array where each entry is this form [key, [value1, ...valuen]]");
+
+      Local<Value> keyHolder = kvPair->Get(context, 0).ToLocalChecked();
+      Local<Value> valuesHolder = kvPair->Get(context, 1).ToLocalChecked();
+      if (kvPair->Length() != 2 || !keyHolder->IsArray() || !valuesHolder->IsArray()) {
+        THROW(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]");
       }
-      QueryValue convertedKey;
+
+      Local<Array> keys = Local<Array>::Cast(keyHolder);
+      Local<Array> values = Local<Array>::Cast(valuesHolder);
+      size_t keySize = that.getKeyFormats()->size();
+      size_t valueSize = that.getValueFormats()->size();
+      std::vector<QueryValueOrWT_ITEM>* convertedKeys = new std::vector<QueryValueOrWT_ITEM>(keySize); // deleted with the EntryOfVectors
+      std::vector<QueryValueOrWT_ITEM>* convertedValues = new std::vector<QueryValueOrWT_ITEM>(valueSize); // deleted with the EntryOfVectors
       error = that.initTable(session);
       if (error) {
         session->session->close(session->session, NULL);
         THROW(Exception::TypeError, wiredtiger_strerror(error));
       }
-      error = extractValue(
-        kvPair->Get(context, 0).ToLocalChecked(),
+      error = extractValues(
+        keys,
         isolate,
-        &convertedKey,
-        that.getKeyFormats()->at(0)
+        context,
+        convertedKeys,
+        that.getKeyFormats()
       );
       if (error) {
         session->session->close(session->session, NULL);
         THROW(Exception::TypeError, "Invalid key type");
       }
-      Local<Value> valuesHolder = kvPair->Get(context, 1).ToLocalChecked();
       if (!valuesHolder->IsArray()) {
         THROW(Exception::TypeError, "Second argument must be an array where each entry is this form [key, [value1, ...valuen]]");
       }
-      std::vector<QueryValue> convertedValues;
       error = extractValues(
-        Local<Array>::Cast(valuesHolder),
+        values,
         isolate,
         context,
-        &convertedValues,
+        convertedValues,
         that.getValueFormats()
       );
       if (error) {
-        freeConvertedKVPairs(&converted);
+        // freeConvertedKVPairs(&converted);
         session->session->close(session->session, NULL);
         THROW(Exception::TypeError, "Invalid value type");
       }
-      converted.push_back(KVPair {
-        convertedKey,
-        convertedValues
-      });
+      converted[i] = std::unique_ptr<EntryOfVectors>(new EntryOfVectors());
+      converted[i]->keyArray = convertedKeys;
+      converted[i]->valueArray = convertedValues;
     }
     error = that.insertMany(session, &converted);
     error = session->session->close(session->session, NULL);
@@ -220,7 +228,6 @@ namespace wiredtiger::binding {
   void WiredTigerTableCreateIndex(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
     WiredTigerTable& that = Unwrap<WiredTigerTable>(args.Holder());
-    Local<Context> context = isolate->GetCurrentContext();
     if (args.Length() != 2 || !args[0]->IsString() || !args[1]->IsString()) {
       THROW(Exception::TypeError, "Must specify a name and config string.");
     }

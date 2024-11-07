@@ -55,7 +55,7 @@ namespace wiredtiger::binding {
       Local<Integer> batchSizeInt = Local<Integer>::Cast(args[0]);
       batchSize = batchSizeInt->Value();
     }
-    std::vector<EntryOfPointers> results;
+    std::vector<std::unique_ptr<EntryOfVectors>> results;
     int result = that.nextBatch(batchSize, &results);
 
     int resultSize = 0;
@@ -66,7 +66,7 @@ namespace wiredtiger::binding {
       }
       if (result != WT_NOTFOUND) {
         THROW(Exception::TypeError, that.session->session->strerror(that.session->session, result));
-        freeResults(&results);
+        // freeResults(&results);
         return;
       }
     }
@@ -74,11 +74,11 @@ namespace wiredtiger::binding {
 
     Local<Array>arr = Array::New(isolate, resultSize);
     for (int i = 0; i < resultSize; i++) {
-      EntryOfPointers entry = results.at(i);
-      Local<Array>keyValues = Array::New(isolate, entry.keySize);
-      Local<Array>valueValues = Array::New(isolate, entry.valueSize);
-      populateArray(isolate, keyValues, entry.keyArray, entry.keySize);
-      populateArray(isolate, valueValues, entry.valueArray, entry.valueSize);
+      EntryOfVectors& entry = *results.at(i);
+      Local<Array>keyValues = Array::New(isolate, entry.keyArray->size());
+      Local<Array>valueValues = Array::New(isolate, entry.valueArray->size());
+      populateArray(isolate, keyValues, entry.keyArray);
+      populateArray(isolate, valueValues, entry.valueArray);
       Local<Array>entryArray = Array::New(isolate, 2);
       entryArray->Set(
         isolate->GetCurrentContext(),
@@ -95,16 +95,7 @@ namespace wiredtiger::binding {
         i,
         entryArray
       ).Check();
-
-      // cleaner to do it inline or with freeResults? Or a paired cursor::teardownArray?
-      // if (entry.keyArray) {
-      //   free(entry.keyArray);
-      // }
-      // if (entry.valueArray) {
-      //   free(entry.valueArray);
-      // }
     }
-    freeResults(&results);
     Return(arr, args);
   }
 
@@ -126,7 +117,7 @@ namespace wiredtiger::binding {
     Local<Function> fn = Deref(isolate, FindCursorConstructorTmpl)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
     Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
 
-    FindCursor* sc = new FindCursor(tableName, conditions, options);
+    FindCursor* sc = new FindCursor(tableName, conditions, options); // deleted on close
     obj->SetAlignedPointerInInternalField(0, sc);
     return obj;
   }

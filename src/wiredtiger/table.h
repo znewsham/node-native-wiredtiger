@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <vector>
+#include <memory>
 
 using namespace std;
 
@@ -30,7 +31,7 @@ class WiredTigerTable {
 
     ~WiredTigerTable();
     int initTable(WiredTigerSession* session);
-    int insertMany(WiredTigerSession* session, std::vector<KVPair> *documents);
+    int insertMany(WiredTigerSession* session, std::vector<std::unique_ptr<EntryOfVectors>> *documents);
     int createIndex(WiredTigerSession* session, char* indexName, char* config);
     std::vector<Format>* getKeyFormats();
     std::vector<Format>* getValueFormats();

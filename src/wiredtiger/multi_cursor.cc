@@ -48,22 +48,20 @@ namespace wiredtiger {
   }
 
 
-
-  int MultiCursor::next(QueryValueOrWT_ITEM** keyArray, size_t* keySize, QueryValueOrWT_ITEM** valueArray, size_t* valueSize) {
+  int MultiCursor::next(std::vector<QueryValueOrWT_ITEM>** keyArray, std::vector<QueryValueOrWT_ITEM>** valueArray) {
     int error;
     if (isComplete) {
       return WT_NOTFOUND;
     }
     while ((error = Cursor::next()) == 0) {
-      *keyArray = this->initArray(false, keySize);
+      *keyArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(false));
       RETURN_IF_ERROR(this->getKey(*keyArray));
-      int count = seenKeys.count({ *keyArray, *keySize });
-      QueryValueOrWT_ITEM* key = *keyArray;
+      int count = seenVectorKeys.count({ *keyArray });
       if (count != 0) {
         continue;
       }
-      seenKeys.insert({ *keyArray, *keySize });
-      *valueArray = this->initArray(true, valueSize);
+      seenVectorKeys.insert({ *keyArray });
+      *valueArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(true));
       RETURN_IF_ERROR(this->getValue(*valueArray));
       break;
     }

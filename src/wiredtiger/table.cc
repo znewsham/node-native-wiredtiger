@@ -96,35 +96,19 @@ namespace wiredtiger {
   }
 
 
-  int WiredTigerTable::insertMany(WiredTigerSession* session, std::vector<KVPair> *documents) {
+  int WiredTigerTable::insertMany(WiredTigerSession* session, std::vector<std::unique_ptr<EntryOfVectors>> *documents) {
     this->initTable(session);
     WT_SESSION* wtSession = session->session;
     WT_CURSOR* wtCursor;
-    WT_ITEM item;
-    WT_ITEM key;
-    size_t bufferSize = 512;
-    void* buffer = malloc(bufferSize);
-    byte keyBuffer[200];// TODO: variable key buffer size
     RETURN_IF_ERROR(wtSession->open_cursor(wtSession, specName, NULL, NULL, &wtCursor));
     Cursor* cursor = new Cursor(wtCursor);
-    size_t keySize;
-    size_t valueSize;
-    QueryValueOrWT_ITEM* keys = cursor->initArray(false, &keySize);
-    QueryValueOrWT_ITEM* values = cursor->initArray(true, &valueSize);
     // WT_CURSOR* cursor = wtCursor;
     for(size_t i = 0; i < documents->size(); i++) {
-      KVPair document = documents->at(i);
-      for (int i = 0; i < keySize; i++) {
-        keys[i].queryValue = document.key;
-      }
-      for (int i = 0; i < valueSize; i++) {
-        values[i].queryValue = document.values.at(i);
-      }
-      cursor->setKey(keys);
-      cursor->setValue(values);
+      EntryOfVectors& document = *documents->at(i);
+      cursor->setKey(document.keyArray);
+      cursor->setValue(document.valueArray);
       RETURN_IF_ERROR(cursor->insert());
     }
-    free(buffer);
     return 0;
   }
 }

@@ -143,7 +143,6 @@ namespace wiredtiger::binding {
 
     char* name = ArgToCharPointer(isolate, args[0]);
     CustomExtractor& extractor = Unwrap<CustomExtractor>(args[1]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
-    char* config = args.Length() > 2 && args[2]->IsString() ? ArgToCharPointer(isolate, args[2]) : NULL;
     that.addExtractor(name, &extractor);
   }
 
@@ -164,7 +163,6 @@ namespace wiredtiger::binding {
 
     char* name = ArgToCharPointer(isolate, args[0]);
     CustomCollator& collator = Unwrap<CustomCollator>(args[1]->ToObject(isolate->GetCurrentContext()).ToLocalChecked());
-    char* config = args.Length() > 4 && args[4]->IsString() ? ArgToCharPointer(isolate, args[1]) : NULL;
     that.addCollator(name, &collator);
   }
 

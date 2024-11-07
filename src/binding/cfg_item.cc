@@ -18,5 +18,6 @@ namespace wiredtiger::binding {
     if (appcfg->type == WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_NUM) {
       return Number::New(isolate, appcfg->val);
     }
+    return Null(isolate);
   }
 }

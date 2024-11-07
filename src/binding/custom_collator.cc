@@ -43,7 +43,7 @@ namespace wiredtiger::binding {
       Nan::CopyBuffer((char*)v2->data, v2->size).ToLocalChecked(),
     };
 
-    Local<Value> retVal = compareCb.Call(self.Get(isolate), argc, argv);
+    Local<Value> retVal = Nan::Call(compareCb, self.Get(isolate), argc, argv).ToLocalChecked();
     if (retVal->IsInt32()) {
       *cmp = retVal->ToInt32(Isolate::GetCurrent()->GetCurrentContext()).ToLocalChecked()->Value();
     }
@@ -65,7 +65,7 @@ namespace wiredtiger::binding {
       GetConfigItemValue(appcfg)
     };
 
-    Local<Value> retVal = customizeCb.Call(self.Get(isolate), argc, argv);
+    Local<Value> retVal = Nan::Call(customizeCb, self.Get(isolate), argc, argv).ToLocalChecked();
     if (retVal.IsEmpty()) {
       return -1;
     }
@@ -86,7 +86,7 @@ namespace wiredtiger::binding {
       WiredTigerSessionGetOrCreate(session)
     };
 
-    terminateCb.Call(self.Get(isolate), argc, argv);
+    Nan::Call(terminateCb, self.Get(isolate), argc, argv);
     return 0;
   }
 

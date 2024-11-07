@@ -21,7 +21,7 @@ namespace wiredtiger {
     return 0;
   }
 
-  int FindCursor::nextBatch(int batchSize, std::vector<EntryOfPointers>* results) {
+  int FindCursor::nextBatch(int batchSize, std::vector<std::unique_ptr<EntryOfVectors>>* results) {
     int error;
     if (isComplete) {
       return WT_NOTFOUND;
@@ -36,19 +36,15 @@ namespace wiredtiger {
     }
     int fetched = 0;
     metrics.batchesRequested++;
-    size_t keySize;
-    size_t valueSize;
-    QueryValueOrWT_ITEM* keyArray;
-    QueryValueOrWT_ITEM* valueArray;
-    while (fetched++ < batchSize && (error = MultiCursor::next(&keyArray, &keySize, &valueArray, &valueSize)) == 0) {
+    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    std::vector<QueryValueOrWT_ITEM>* valueArray = NULL;
+    while (fetched++ < batchSize && (error = MultiCursor::next(&keyArray, &valueArray)) == 0) {
       metrics.valuesSeen++;
       metrics.returned++;
-      results->push_back({
-        keyArray,
-        keySize,
-        valueArray,
-        valueSize
-      });
+      EntryOfVectors* ev = new EntryOfVectors();
+      results->push_back(std::unique_ptr<EntryOfVectors>(ev));
+      ev->keyArray = keyArray;
+      ev->valueArray = valueArray;
     }
     if (error == WT_NOTFOUND) {
       isComplete = true;
@@ -129,13 +125,12 @@ namespace wiredtiger {
   }
 
   FindCursor::~FindCursor() {
-    freeConditions(conditions);
+    delete conditions;
     free(tableName);
     if (columns != NULL) {
       free(columns);
     }
     // Cursor::~Cursor();
-    delete conditions;
   }
 
 }

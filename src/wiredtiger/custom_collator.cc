@@ -8,9 +8,6 @@ namespace wiredtiger {
     const WT_ITEM *v2,
     int* cmp
   ) {
-    CustomCollator *potential = (CustomCollator*) collator;
-    // what a fooking mess - but at least if we move extractor somewhere else, the offset system should work.
-    uint64_t offset = ((char*)&potential->collator - (char*)potential);
     CustomCollator* actualCollator = CustomCollator::CustomCollatorForCollator(collator);
     return actualCollator->compare(session, v1, v2, cmp);
   }
@@ -67,8 +64,6 @@ namespace wiredtiger {
     const WT_ITEM *v2,
     int *cmp
   ) {
-    const char *s1 = (const char *)v1->data;
-    const char *s2 = (const char *)v2->data;
     *cmp = wiredtiger_lex_compare(v1, v2);
     return 0;
   }

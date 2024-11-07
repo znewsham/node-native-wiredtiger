@@ -194,7 +194,7 @@ export class Collection
     const keyValue = doc[this.#keyDefinition.name];
     this._table.insertMany([
       [
-        keyValue,
+        [keyValue],
         this.#getValuesForInsert(doc)
       ]
     ]);
@@ -203,7 +203,7 @@ export class Collection
   insertMany(docs: ESchema[]) {
     this.#ensureTable();
     this._table.insertMany(docs.map((doc) => [
-      doc[this.#keyDefinition.name],
+      [doc[this.#keyDefinition.name]],
       this.#getValuesForInsert(doc)
     ]));
   }

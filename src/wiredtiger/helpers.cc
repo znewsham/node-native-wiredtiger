@@ -276,34 +276,36 @@ void unpackItemForFormat(
     values->push_back(QueryValue {
       format,
       valueItem,
-      size
+      size,
+      false
     });
   }
 }
 
+/**
+ * @deprecated see comments regarding int sizees
+ */
 int packItem(
   WT_PACK_STREAM *stream,
-  QueryValue item
+  QueryValueOrWT_ITEM* incomingItem
 ) {
-  printf("Packing: %c\n", item.dataType);
+  QueryValue& item = incomingItem->queryValue;
   if (item.dataType == FIELD_STRING) {
-    printf("Packing: %s\n", (char*)item.value);
-    return wiredtiger_pack_str(stream, (char*)item.value);
+    return wiredtiger_pack_str(stream, (char*)item.value.valuePtr);
   }
   else if (item.dataType == FIELD_BYTE || item.dataType == FIELD_HALF || item.dataType == FIELD_INT || item.dataType == FIELD_INT2 || item.dataType == FIELD_LONG) {
-    int64_t intVal = *(int64_t*)item.value;
-    printf("Packing: %d\n", intVal);
+    int64_t intVal = (int64_t)item.value.valueUint;
     // HUGE TODO: this code is unusable without casting to the right int size
     return wiredtiger_pack_int(stream, intVal);
   }
   else if (item.dataType == FIELD_BITFIELD || item.dataType == FIELD_UBYTE || item.dataType == FIELD_UHALF || item.dataType == FIELD_UINT || item.dataType == FIELD_UINT2 || item.dataType == FIELD_ULONG) {
-    uint64_t intVal = *(uint64_t*)item.value;
+    uint64_t intVal = item.value.valueUint;
     // HUGE TODO: this code is unusable without casting to the right int size
     return wiredtiger_pack_uint(stream, intVal);
   }
   else if (item.dataType == FIELD_WT_ITEM) {
     WT_ITEM wt;
-    wt.data = item.value;
+    wt.data = item.value.valuePtr;
     wt.size = item.size;
     return wiredtiger_pack_item(stream, &wt);
   }
@@ -312,10 +314,13 @@ int packItem(
 }
 
 
+/**
+ * @deprecated see comments regarding int sizees
+ */
 int packItems(
   WT_SESSION* session,
   const char* format,
-  std::vector<QueryValue>* items,
+  std::vector<QueryValueOrWT_ITEM>* items,
   void** buffer,
   size_t* bufferSize,
   size_t* usedSize
@@ -323,7 +328,7 @@ int packItems(
   WT_PACK_STREAM *stream;
   RETURN_IF_ERROR(wiredtiger_pack_start(session, format, *buffer, *bufferSize, &stream));
   for (size_t i = 0; i < items->size(); i++) {
-    int error = packItem(stream, items->at(i));
+    int error = packItem(stream, &(*items)[i]);
     if (error == 12) {// insufficient space in buffer
       // unfortunately it does no good to pre-empt this - the bufferSize is fixed at start, we just have to start over.
       // worst case scenario would be ever increasing doc sizes during packing - so we kept having to increase the buffer
@@ -349,8 +354,8 @@ char* copyCfgValue(WT_CONFIG_ITEM *cfg) {
 // I'm a bit worried that sometimes a value.value may be an actual pointer and sometimes it may be a value pretending to be a pointer
 // on extracting values from node (e.g., table::insertMany) they're always pointers.
 void freeExtracted(QueryValue value) {
-  if (!value.noFree && value.value != NULL) {
-    free(value.value);
+  if (!value.noFree && value.value.valuePtr != NULL) {
+    free(value.value.valuePtr);
   }
 }
 
@@ -368,36 +373,11 @@ void freeQueryValues(QueryValueOrWT_ITEM* values, int length) {
   free(values);
 }
 
-void freeConvertedKVPairs(std::vector<KVPair>* converted) {
-  for (size_t i = 0; i < converted->size(); i++) {
-    KVPair kv = converted->at(i);
-    freeExtracted(kv.key);
-    for (size_t a = 0; a < kv.values.size(); a++) {
-      freeExtracted(kv.values.at(a));
-    }
-  }
-}
-
-void freeResults(std::vector<EntryOfPointers>* results) {
-  for (size_t i = 0; i < results->size(); i++) {
-    free(results->at(i).keyArray);
-    free(results->at(i).valueArray);
-  }
-}
-
-void freeConditions(std::vector<QueryCondition>* conditions) {
-  for (size_t i = 0; i < conditions->size(); i++) {
-    QueryCondition condition = conditions->at(i);
-    freeQueryValues(&condition.values);
-    freeConditions(&condition.subConditions);
-  }
-}
-
 int cursorForCondition(
   WT_SESSION* session,
   char* tableCursorURI,
   char* joinCursorURI,
-  QueryCondition condition,
+  QueryCondition& condition,
   WT_CURSOR** conditionCursorPointer,
   bool inSubJoin,
   std::vector<WT_CURSOR*>* cursors,
@@ -434,7 +414,7 @@ int cursorForCondition(
       buffers
     );
   }
-  if (condition.values.size()) {
+  if (condition.values != NULL && condition.values->size()) {
     // TODO: table name
     RETURN_IF_ERROR(session->open_cursor(session, condition.index == NULL ? tableCursorURI : condition.index, NULL, "raw", conditionCursorPointer));
     WT_CURSOR* conditionCursor = *conditionCursorPointer;
@@ -446,7 +426,7 @@ int cursorForCondition(
     RETURN_IF_ERROR(packItems(
       session,
       conditionCursor->value_format,
-      &condition.values,
+      condition.values,
       (void**)&buffer,
       &bufferSize,
       &valueSize
@@ -495,12 +475,12 @@ int cursorForCondition(
     }
     return 0;
   }
-  if (condition.subConditions.size()) {
+  if (condition.subConditions != NULL && condition.subConditions->size()) {
     return cursorForConditions(
       session,
       tableCursorURI,
       joinCursorURI,
-      &condition.subConditions,
+      condition.subConditions,
       conditionCursorPointer,
       condition.operation == OPERATION_OR,
       true,
@@ -538,12 +518,20 @@ int cursorForConditions(
   bool inSubJoin = inSubJoinAlready;
   for (size_t i = 0; i < conditions->size(); i++) {
     WT_CURSOR* conditionCursor;
-    QueryCondition condition = conditions->at(i);
+    QueryCondition& condition = conditions->at(i);
 
-    int error = cursorForCondition(session, tableCursorURI, joinCursorURI, condition, &conditionCursor, inSubJoin, cursors, buffers);
+    int error = cursorForCondition(
+      session,
+      tableCursorURI,
+      joinCursorURI,
+      condition,
+      &conditionCursor,
+      inSubJoin,
+      cursors,
+      buffers
+    );
     if (error == WT_NOTFOUND) {
       if (!disjunction) {
-        printf("Not joining %s %d\n", conditionCursor->key.data, condition.operation);
         // bit hacky - but we only return WT_NOTFOUND when the cursor wouldn't restrict things, e.g., LT <key where nothing GT that key exists>
         // in the case of AND - this cursor wouldn't reduce the scope further (we need to look at every key) and adding it will exclude the last valid item
         continue;

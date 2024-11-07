@@ -36,22 +36,35 @@ namespace wiredtiger {
   }
 
   void Cursor::populateInner(
-    QueryValueOrWT_ITEM* valueArray,
+    std::vector<QueryValueOrWT_ITEM>* valueArray,
     av_alist* argList,
     bool forValues,
     bool forWrite
   ) {
     for (size_t i = 0; i < columnCount(forValues); i++) {
       Format format = formatAt(forValues, i);
-      if (format.format == FIELD_WT_ITEM || format.format == 'U') {
-        av_ptr(*argList, WT_ITEM*, &valueArray[i]);
+      if (format.format == FIELD_WT_ITEM || format.format == FIELD_WT_UITEM) {
+        WT_ITEM item;
+        item.data = (*valueArray)[i].queryValue.value.valuePtr;
+        item.size = (*valueArray)[i].queryValue.size;
+        av_ptr(*argList, WT_ITEM*, &item);
       }
       else {
         if (forWrite) {
-          av_ptr(*argList, void*, valueArray[i].queryValue.value);
+          if (FieldIsPtr(format.format)) {
+            av_ptr(*argList, void*, (*valueArray)[i].queryValue.value.valuePtr);
+          }
+          else {
+            av_uint(*argList, (*valueArray)[i].queryValue.value.valueUint);
+          }
         }
         else {
-          av_ptr(*argList, void*, &valueArray[i].queryValue.value);
+          if (FieldIsPtr(format.format)) {
+            av_ptr(*argList, void*, &(*valueArray)[i].queryValue.value.valuePtr);
+          }
+          else {
+            av_ptr(*argList, void*, &(*valueArray)[i].queryValue.value.valueUint);
+          }
         }
       }
     }
@@ -59,7 +72,7 @@ namespace wiredtiger {
 
   void Cursor::populate(
     void (*funcptr)(WT_CURSOR* cursor, ...),
-    QueryValueOrWT_ITEM* valueArray,
+    std::vector<QueryValueOrWT_ITEM>* valueArray,
     bool forValues
   ) {
     init();
@@ -72,7 +85,7 @@ namespace wiredtiger {
 
   int Cursor::populate(
     int (*funcptr)(WT_CURSOR* cursor, ...),
-    QueryValueOrWT_ITEM* valueArray,
+    std::vector<QueryValueOrWT_ITEM>* valueArray,
     bool forValues
   ) {
     init();
@@ -89,19 +102,19 @@ namespace wiredtiger {
         void* value = (void*)wtItem->data;
         size_t size = wtItem->size;
 
-        valueArray[i].queryValue.size = size;
-        valueArray[i].queryValue.value = (void*)value;
+        (*valueArray)[i].queryValue.size = size;
+        (*valueArray)[i].queryValue.value.valuePtr = (void*)value;
 
       }
-      if (format.size && !valueArray[i].queryValue.size) {
-        valueArray[i].queryValue.size = format.size;
+      if (format.size && !(*valueArray)[i].queryValue.size) {
+        (*valueArray)[i].queryValue.size = format.size;
       }
       // for better or worse, we store/access values in the same place "void* value" - but sometimes its just a real value (e.g., any time other than the above)
       // for worse, on set/insert or whatever, we store an actual pointer in these fields (e.g., int*).
       // more confusing is that despite both these facts, we never want to free these items - since the memory is always owned/managed by WT.
       // setting noFree allows us to reuse helpers around queryValue and free the whole thing in a consistent way
-      valueArray[i].queryValue.noFree = true;
-      valueArray[i].queryValue.dataType = format.format;
+      (*valueArray)[i].queryValue.noFree = true;
+      (*valueArray)[i].queryValue.dataType = format.format;
     }
 
     // it is vital that at this point, variable (non null terminated) items have a size associated
@@ -112,25 +125,25 @@ namespace wiredtiger {
 
   void Cursor::populateRaw(
     void (*funcptr)(WT_CURSOR* cursor, ...),
-    QueryValueOrWT_ITEM* valueArray
+    std::vector<QueryValueOrWT_ITEM>* valueArray
   ) {
-    WT_ITEM item;
-    cursor->set_value(cursor, valueArray[0].wtItem);
+    cursor->set_value(cursor, (*valueArray)[0].wtItem);
   }
 
   int Cursor::populateRaw(
     int (*funcptr)(WT_CURSOR* cursor, ...),
-    QueryValueOrWT_ITEM* valueArray
+    std::vector<QueryValueOrWT_ITEM>* valueArray
   ) {
     WT_ITEM item;
     int result = cursor->get_value(cursor, &item);
     RETURN_IF_ERROR(result);
-    valueArray[0].queryValue.value = (void*)item.data;
-    valueArray[0].queryValue.size = item.size;
+    (*valueArray)[0].queryValue.dataType = FIELD_WT_ITEM;
+    (*valueArray)[0].queryValue.value.valuePtr = (void*)item.data;
+    (*valueArray)[0].queryValue.size = item.size;
     return result;
   }
 
-  int Cursor::getValue(QueryValueOrWT_ITEM* valueArray) {
+  int Cursor::getValue(std::vector<QueryValueOrWT_ITEM>* valueArray) {
     init();
     if (isRaw) {
       return populateRaw(cursor->get_value, valueArray);
@@ -140,13 +153,8 @@ namespace wiredtiger {
     }
   }
 
-  void Cursor::setValue(QueryValueOrWT_ITEM* valueArray) {
+  void Cursor::setValue(std::vector<QueryValueOrWT_ITEM>* valueArray) {
     init();
-    if (value != NULL && value != valueArray) {
-      freeQueryValues(value, columnCount(true));
-      value = NULL;
-    }
-    value = valueArray;
     if (isRaw) {
       populateRaw(cursor->set_value, valueArray);
     }
@@ -155,7 +163,7 @@ namespace wiredtiger {
     }
   }
 
-  int Cursor::getKey(QueryValueOrWT_ITEM* valueArray) {
+  int Cursor::getKey(std::vector<QueryValueOrWT_ITEM>* valueArray) {
     init();
     if (isRaw) {
       return populateRaw(cursor->get_key, valueArray);
@@ -165,13 +173,8 @@ namespace wiredtiger {
     }
   }
 
-  void Cursor::setKey(QueryValueOrWT_ITEM* valueArray) {
+  void Cursor::setKey(std::vector<QueryValueOrWT_ITEM>* valueArray) {
     init();
-    if (key != NULL && key != valueArray) {
-      freeQueryValues(key, columnCount(false));
-      key = NULL;
-    }
-    key = valueArray;
     if (isRaw) {
       populateRaw(cursor->set_key, valueArray);
     }
@@ -214,14 +217,6 @@ namespace wiredtiger {
   }
 
   int Cursor::reset() {
-    if (value != NULL) {
-      freeQueryValues(value, columnCount(true));
-      value = NULL;
-    }
-    if (key != NULL) {
-      freeQueryValues(key, columnCount(false));
-      key = NULL;
-    }
     return cursor->reset(cursor);
   }
 

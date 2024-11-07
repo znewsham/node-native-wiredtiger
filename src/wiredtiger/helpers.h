@@ -55,11 +55,8 @@ int packItems(
   size_t* usedSize
 );
 char* copyCfgValue(WT_CONFIG_ITEM *cfg);
-void freeConvertedKVPairs(std::vector<KVPair>* converted);
-void freeResults(std::vector<EntryOfPointers>* results);
 void freeQueryValues(std::vector<QueryValue>* values);
 void freeQueryValues(QueryValueOrWT_ITEM* values, int length);
-void freeConditions(std::vector<QueryCondition>* conditions);
 int cursorForConditions(
   WT_SESSION* session,
   char* tableCursorURI,
