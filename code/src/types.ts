@@ -125,6 +125,8 @@ export declare class WiredTigerTable {
   find<Key extends any[], Value extends any[]>(conditions?: QueryCondition<Value>[], options?: FlatFindOptions): FindCursor<Key, Value>;
   insertMany(documents: [any[], any[]][]): void;
   createIndex(indexName: string, config: string): void;
+  deleteMany(conditions?: QueryCondition<any[]>[]): number;
+  updateMany(conditions: QueryCondition<any[]>[], newValues: any[]): number;
 }
 
 export declare class WiredTigerMapTable extends WiredTigerTable {

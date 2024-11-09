@@ -81,7 +81,7 @@ namespace wiredtiger {
       sprintf(tableCursorUri, "table:%s", this->tableName);
     }
     int result = cursorForConditions(
-      this->session->session,
+      this->session->getWTSession(),
       tableCursorUri,
       joinCursorUri,
       conditions,
@@ -126,7 +126,9 @@ namespace wiredtiger {
 
   FindCursor::~FindCursor() {
     delete conditions;
-    free(tableName);
+    // We DO NOT free tableName since it's passed as a pointer directly from the table
+    // this is generally desirable since it will be a frequent operation and we want to avoid the copy
+    // free(tableName);
     if (columns != NULL) {
       free(columns);
     }

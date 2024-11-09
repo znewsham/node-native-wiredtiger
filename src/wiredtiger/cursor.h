@@ -27,19 +27,26 @@ namespace wiredtiger {
     protected:
       bool isInitted = false;
       bool isRaw = false;
+      bool isClosed = false;
       std::vector<Format> keyValueFormats;
       std::vector<Format> valueValueFormats;
+      WT_CURSOR* cursor;
       int init();
 
     public:
-      WT_CURSOR* cursor;
 
       Cursor(WT_CURSOR* _cursor): cursor(_cursor) {
 
       }
 
       virtual ~Cursor() {
+        if (!isClosed) {
+          this->close();
+        }
+      }
 
+      inline WT_CURSOR* getWTCursor() {
+        return this->cursor;
       }
 
       int search();

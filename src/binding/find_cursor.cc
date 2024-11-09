@@ -65,7 +65,7 @@ namespace wiredtiger::binding {
         THROW(Exception::TypeError, "Usage error");// TODO map error codes
       }
       if (result != WT_NOTFOUND) {
-        THROW(Exception::TypeError, that.session->session->strerror(that.session->session, result));
+        THROW(Exception::TypeError, that.session->strerror(result));
         // freeResults(&results);
         return;
       }
@@ -103,10 +103,18 @@ namespace wiredtiger::binding {
     FindCursor& that = Unwrap<FindCursor>(args.Holder());
     int result = that.close();
     if (result != 0) {
-      THROW(Exception::TypeError, that.session->session->strerror(that.session->session, result));
+      THROW(Exception::TypeError, that.session->strerror(result));
     }
-    FindCursor* thatPointer = static_cast<FindCursor*>(args.Holder()->GetAlignedPointerFromInternalField(0));
-    delete thatPointer;
+  }
+
+  void FindCursorCount(const FunctionCallbackInfo<Value>& args) {
+    FindCursor& that = Unwrap<FindCursor>(args.Holder());
+    int counter;
+    int result = that.count(&counter);
+    if (result != 0) {
+      THROW(Exception::TypeError, that.session->strerror(result));
+    }
+    Return(Int32::New(Isolate::GetCurrent(), counter), args);
   }
 
   void FindCursorNewInternal(const FunctionCallbackInfo<Value>& args) {
@@ -136,6 +144,7 @@ namespace wiredtiger::binding {
     proto->Set(NewLatin1String(isolate, "reset"), NewFunctionTemplate(isolate, FindCursorReset, Local<Value>(), sig));
     proto->Set(NewLatin1String(isolate, "nextBatch"), NewFunctionTemplate(isolate, FindCursorNextBatch, Local<Value>(), sig));
     proto->Set(NewLatin1String(isolate, "close"), NewFunctionTemplate(isolate, FindCursorClose, Local<Value>(), sig));
+    proto->Set(NewLatin1String(isolate, "count"), NewFunctionTemplate(isolate, FindCursorCount, Local<Value>(), sig));
     // proto->Set(NewLatin1String(isolate, "metrics"), NewFunctionTemplate(isolate, FindCursorMetrics, Local<Value>(), sig));
   }
 }

@@ -56,9 +56,19 @@ namespace wiredtiger {
     uint64_t valueUint;
   } QueryValueValue;
   typedef struct QueryValue {
-    char dataType;
+    ~QueryValue() {
+      if (FieldIsPtr(dataType)) {
+        if (!noFree && value.valuePtr != NULL) {
+          free(value.valuePtr);
+        }
+      }
+    }
+    // CRITICAL: The first two ites of QueryValue *MUST* match the shape and size of wtItem
+    // if we're unable to guarantee this - we should use a struct not a union for QueryValueOrWT_ITEM
     QueryValueValue value;
     size_t size;
+    // END CRITICAL
+    char dataType;
     bool noFree/* = false*/;
   } QueryValue;
 
@@ -71,7 +81,6 @@ namespace wiredtiger {
       }
     }
     QueryValue queryValue;
-    WT_ITEM wtItem;
   } QueryValueOrWT_ITEM;
 
   typedef struct QueryCondition {
@@ -81,6 +90,9 @@ namespace wiredtiger {
       }
       if (values != NULL) {
         delete values;
+      }
+      if (index != NULL) {
+        free(index);
       }
     }
     char* index;

@@ -9,7 +9,7 @@ namespace wiredtiger::binding {
   void CursorSetupAccessors(Local<FunctionTemplate> tmpl);
   Local<Object> CursorGetNew(WT_CURSOR* cursor);
   Local<Object> CursorGetNew(
-    WT_SESSION *session,
+    WiredTigerSession *session,
     char* uri,
     char* config
   );

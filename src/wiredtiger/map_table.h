@@ -19,6 +19,7 @@ namespace wiredtiger {
       WT_SESSION *session = NULL;
 
       ErrorAndResult<WT_CURSOR*> getCursor(bool useCache) {
+        ensureSpecName();
         int error = 0;
         if (session == NULL) {
           error = db->conn->open_session(db->conn, NULL, "cache_cursors", &session);

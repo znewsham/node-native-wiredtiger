@@ -268,7 +268,15 @@ int extractValue(
   // - u could take a Buffer or a number. If it's a number we treat it as a float64
   QueryValueValue value;
   value.valuePtr = NULL;
+  converted->dataType = format.format;
   size_t size = -1;
+  if (val->IsUndefined()) {
+    // TODO: we probably want some way to indicate that we don't want a value, e.g., a default value (0, null ptr, whatever)
+    // for now, we use this only in the update to indicate we're not changing this column
+    converted->dataType = FIELD_PADDING;
+    converted->value = value;
+    return 0;
+  }
   switch(format.format) {
     case FIELD_BITFIELD:
       if (val->IsInt32()) {
@@ -305,8 +313,10 @@ int extractValue(
       if (val->IsBigInt()) {
         int sign_bit;
         int word_count = 1;
-        value.valuePtr = (int64_t*)calloc(sizeof(int64_t), 1);
-        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value.valuePtr);
+        uint64_t* bytes = (uint64_t*)calloc(sizeof(uint64_t), 1);
+        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, bytes);
+        value.valueUint = *bytes;
+        free(bytes);
         size = sizeof(uint64_t);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
@@ -326,15 +336,16 @@ int extractValue(
       if (val->IsBigInt()) {
         int sign_bit;
         int word_count = 1;
-        value.valuePtr = (int64_t*)calloc(sizeof(int64_t), 1);
-        int64_t* longValue = (int64_t*)value.valuePtr;
-        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)value.valuePtr);
+        int64_t* longValue = (int64_t*)calloc(sizeof(int64_t), 1);
+        (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)longValue);
         if (sign_bit == 1) {
           *longValue = *longValue | 0x8000000000000000;
         }
         else {
           *longValue = *longValue | 0x7fffffffffffffff;
         }
+        value.valueUint = *longValue;
+        free(longValue);
         size = sizeof(int64_t);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }

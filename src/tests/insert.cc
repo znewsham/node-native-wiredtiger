@@ -33,17 +33,20 @@ int runRegular() {
   session->close(session, NULL);
 
   db->conn->open_session(db->conn, NULL, NULL, &session);
-  WT_CURSOR* indexCursor;
-  session->open_cursor(session, "index:Hello:int", NULL, NULL, &indexCursor);
+  WT_CURSOR* deleteCursor;
+  session->open_cursor(session, "table:Hello", NULL, NULL, &deleteCursor);
   // indexCursor->set_key(indexCursor, 3);
   // indexCursor->search(indexCursor);
   int myError = 0;
-  while ((myError = indexCursor->next(indexCursor)) == 0) {
-    int32_t key;
-    myError = indexCursor->get_key(indexCursor, &key);
-    printf("Found: %d %d\n", key, myError);
-  }
-  indexCursor->close(indexCursor);
+  deleteCursor->set_key(deleteCursor, "AAA");
+  printf("AAA: %d\n", deleteCursor->remove(deleteCursor));
+  deleteCursor->set_key(deleteCursor, "BBB");
+  printf("BBB: %d\n", deleteCursor->remove(deleteCursor));
+  deleteCursor->set_key(deleteCursor, "CCC");
+  printf("CCC: %d\n", deleteCursor->remove(deleteCursor));
+  deleteCursor->set_key(deleteCursor, "DDD");
+  printf("DDD: %d\n", deleteCursor->remove(deleteCursor));
+  deleteCursor->close(deleteCursor);
   session->close(session, NULL);
   db->conn->close(db->conn, NULL);
 }
@@ -55,139 +58,75 @@ int runWrapped() {
   WT_SESSION* wtSession;
   db->conn->open_session(db->conn, NULL, NULL, &wtSession);
   WiredTigerSession* session = new WiredTigerSession(wtSession);
-  WT_CURSOR* wtInsertCursor;
-  session->session->open_cursor(session->session, "table:Hello", NULL, NULL, &wtInsertCursor);
-  Cursor* insertCursor = new Cursor(wtInsertCursor);
-  QueryValueOrWT_ITEM* key = (QueryValueOrWT_ITEM*)calloc(sizeof(QueryValueOrWT_ITEM), 1);
-  QueryValueOrWT_ITEM* value = (QueryValueOrWT_ITEM*)calloc(sizeof(QueryValueOrWT_ITEM), 2);
   WiredTigerTable* table = new WiredTigerTable(db, "Hello", "key_format=S,value_format=Si,columns=(_id,indexed,int)");
-  table->createIndex(session, "indexed", "columns=(indexed),collator=regular");
-  table->createIndex(session, "int", "columns=(int)");
-  std::vector<KVPair> documents;
-  key[0].queryValue.dataType = 'S';
-  value[0].queryValue.dataType = 'S';
-  value[1].queryValue.dataType = 'i';
-  key[0].queryValue.noFree = true;
-  value[0].queryValue.noFree = true;
-  value[1].queryValue.noFree = true;
+  std::vector<std::unique_ptr<EntryOfVectors>> documents;
 
-  int vals[4] = { 1, 3, 5, 6 };
+  char* vals[4] = { "AAA", "BBB", "CCC", "DDD" };
 
-  documents.push_back(KVPair {
-    QueryValue {
+
+  for (int i = 0; i < 4; i++) {
+    std::vector<QueryValueOrWT_ITEM>* key = new std::vector<QueryValueOrWT_ITEM>(1);
+    (*key)[0] = { 'S', vals[i], 0, true };
+    std::vector<QueryValueOrWT_ITEM>* value = new std::vector<QueryValueOrWT_ITEM>(2);
+    EntryOfVectors* ev = new EntryOfVectors();
+    (*value)[0] = {
       'S',
-      (char*)"AAA",
+      (char*)"test2",
       0,
       true
-    },
-    std::vector<QueryValue>{
-      {
-        'S',
-        (char*)"test1",
-        0,
-        true
-      },
-      {
-        'i',
-        (void*)1,
-        0,
-        true
-      }
-    }
-  });
-
-
-  documents.push_back(KVPair {
-    QueryValue {
-      'S',
-      (char*)"BBB",
-      0,
-      true
-    },
-    std::vector<QueryValue>{
-      {
-        'S',
-        (char*)"test2",
-        0,
-        true
-      },
-      {
+    };
+    (*value)[1] = {
         'i',
         (void*)3,
         0,
         true
-      }
-    }
-  });
-
-  documents.push_back(KVPair {
-    QueryValue {
-      'S',
-      (char*)"CCC",
-      0,
-      true
-    },
-    std::vector<QueryValue>{
-      {
-        'S',
-        (char*)"test3",
-        0,
-        true
-      },
-      {
-        'i',
-        (void*)5,
-        0,
-        true
-      }
-    }
-  });
-
-
-  documents.push_back(KVPair {
-    QueryValue {
-      'S',
-      (char*)"DDD",
-      0,
-      true
-    },
-    std::vector<QueryValue>{
-      {
-        'S',
-        (char*)"test4",
-        0,
-        true
-      },
-      {
-        'i',
-        (void*)6,
-        0,
-        true
-      }
-    }
-  });
-  table->insertMany(session, &documents);
+    };
+    ev->keyArray = key;
+    ev->valueArray = value;
+    documents.push_back(std::unique_ptr<EntryOfVectors>(ev));
+  }
+  printf("Insert: %d\n", table->insertMany(session, &documents));
   session->session->close(session->session, NULL);
 
   db->conn->open_session(db->conn, NULL, NULL, &wtSession);
-  WT_CURSOR* wtIndexCursor;
-  session->session->open_cursor(session->session, "index:Hello:int", NULL, NULL, &wtIndexCursor);
-  Cursor* indexCursor = new Cursor(wtIndexCursor);
-  // indexCursor->set_key(indexCursor, 3);
-  // indexCursor->search(indexCursor);
-  int myError = 0;
-  key[0].queryValue.noFree = true;
-  while ((myError = indexCursor->next()) == 0) {
-    myError = indexCursor->getKey(key);
-    printf("Found: %d %d\n", key->queryValue.value, myError);
+  WT_CURSOR* wtDeleteCursor;
+  session->session->open_cursor(session->session, "table:Hello", NULL, NULL, &wtDeleteCursor);
+  Cursor* deleteCursor = new Cursor(wtDeleteCursor);
+
+  int error;
+  while((error = wtDeleteCursor->next(wtDeleteCursor)) == 0) {
+    char* str;
+    wtDeleteCursor->get_key(wtDeleteCursor, &str);
+    printf("Found:%s\n", str);
   }
-  wtIndexCursor->close(wtIndexCursor);
+
+  std::vector<QueryValueOrWT_ITEM> key(1);
+  key[0] = { 'S', (char*)"AAA", 0, true };
+  deleteCursor->setKey(&key);
+  printf("AAA: %d\n", deleteCursor->remove());
+  deleteCursor->setKey(&key);
+  printf("AAA: %d\n", deleteCursor->remove());
+  key[0] = { 'S', (char*)"BBB", 0, true };
+  deleteCursor->setKey(&key);
+  printf("BBB: %d\n", deleteCursor->remove());
+  key[0] = { 'S', (char*)"CCC", 0, true };
+  deleteCursor->setKey(&key);
+  printf("CCC: %d\n", deleteCursor->remove());
+  key[0] = { 'S', (char*)"DDD", 0, true };
+  deleteCursor->setKey(&key);
+  printf("DDD: %d\n", deleteCursor->remove());
+
+  while((error = wtDeleteCursor->next(wtDeleteCursor)) == 0) {
+    char* str;
+    wtDeleteCursor->get_key(wtDeleteCursor, &str);
+    printf("Found:%s\n", str);
+  }
+  wtDeleteCursor->close(wtDeleteCursor);
   session->session->close(session->session, NULL);
   db->conn->close(db->conn, NULL);
 }
 
 int main() {
-  // int x = runRegular();
-  runWrapped();
+  int x = runWrapped();
   return 0;
 }

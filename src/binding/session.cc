@@ -20,7 +20,7 @@ namespace wiredtiger::binding {
     char* specs = ArgToCharPointer(isolate, args[1]);
     int result = that.create(typeAndName, specs);
     if (result) {
-      THROW(Exception::TypeError, that.session->strerror(that.session, result));
+      THROW(Exception::TypeError, that.strerror(result));
     }
     free(typeAndName);
     free(specs);
@@ -44,7 +44,7 @@ namespace wiredtiger::binding {
       config = ArgToCharPointer(isolate, args[1]);
     }
 
-    Local<Object> object = wiredtiger::binding::CursorGetNew(that.session, uri, config);
+    Local<Object> object = wiredtiger::binding::CursorGetNew(&that, uri, config);
     free(uri);
     if (config != NULL) {
       free(config);
@@ -55,14 +55,10 @@ namespace wiredtiger::binding {
   void WiredTigerSessionClose(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
     WiredTigerSession& that = Unwrap<WiredTigerSession>(args.Holder());
-    int result = that.session->close(that.session, NULL);
+    int result = that.close(NULL);
     if (result != 0) {
-      THROW(Exception::TypeError, that.session->strerror(that.session, result));
+      THROW(Exception::TypeError, that.strerror(result));
     }
-
-    // TODO: is this right? We delete the object after closing? Seems...dangerous
-    WiredTigerSession* thatPointer = static_cast<WiredTigerSession*>(args.Holder()->GetAlignedPointerFromInternalField(0));
-    delete thatPointer;
 
     Return(Integer::New(isolate, result), args);
   }
@@ -76,11 +72,21 @@ namespace wiredtiger::binding {
     return obj;
   }
 
+  void WiredTigerSessionCleanup(const v8::WeakCallbackInfo<WiredTigerSession>& data){
+    WiredTigerSession* session = (WiredTigerSession*)data.GetParameter();
+    v8::Global<v8::Object>* persistent = existingSessions.at(session);
+    existingSessions.erase(session);
+    persistent->Reset(Isolate::GetCurrent(), v8::Local<v8::Object>{});
+    delete session;
+    delete persistent;
+  }
+
   static void WiredTigerSessionRegister(WiredTigerSession* session, Local<Object> obj) {
     Isolate* isolate = Isolate::GetCurrent();
     obj->SetAlignedPointerInInternalField(0, session);
     v8::Global<v8::Object>* persistent = new v8::Global<v8::Object>();
     persistent->Reset(isolate, obj);
+    persistent->SetWeak(session, WiredTigerSessionCleanup, v8::WeakCallbackType::kParameter);
     existingSessions.insert(pair<WiredTigerSession*, v8::Global<v8::Object>*>{ session, persistent });
   }
 

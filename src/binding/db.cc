@@ -15,6 +15,16 @@
 namespace wiredtiger::binding {
   Persistent<FunctionTemplate> WiredTigerDBConstructorTmpl;
 
+  static map<WiredTigerDB*, v8::Global<v8::Object>*> existingDbs;
+  void WiredTigerDBCleanup(const v8::WeakCallbackInfo<WiredTigerDB>& data){
+    WiredTigerDB* db = (WiredTigerDB*)data.GetParameter();
+    v8::Global<v8::Object>* persistent = existingDbs.at(db);
+    existingDbs.erase(db);
+    persistent->Reset(Isolate::GetCurrent(), v8::Local<v8::Object>{});
+    delete db;
+    delete persistent;
+  }
+
   void WiredTigerDBOpen(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
     WiredTigerDB& that = Unwrap<WiredTigerDB>(args.Holder());
@@ -62,8 +72,7 @@ namespace wiredtiger::binding {
   }
   void WiredTigerDBClose(const FunctionCallbackInfo<Value>& args) {
     WiredTigerDB& that = Unwrap<WiredTigerDB>(args.Holder());
-    int result = that.conn->close(that.conn, NULL);
-    that.conn = NULL;
+    int result = that.close(NULL);
     if (result != 0) {
       THROW(Exception::TypeError, "Couldn't close");
     }
@@ -170,6 +179,10 @@ namespace wiredtiger::binding {
     Local<Object> handle = args.This();
     WiredTigerDB* db = new WiredTigerDB();
     handle->SetAlignedPointerInInternalField(0, db);
+    v8::Global<v8::Object>* persistent = new v8::Global<v8::Object>();
+    persistent->Reset(Isolate::GetCurrent(), handle);
+    persistent->SetWeak(db, WiredTigerDBCleanup, v8::WeakCallbackType::kParameter);
+    existingDbs.insert(pair<WiredTigerDB*, v8::Global<v8::Object>*>{ db, persistent });
     Return(args.This(), args);
   }
 

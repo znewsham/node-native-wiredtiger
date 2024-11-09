@@ -7,7 +7,7 @@ import { CustomExtractor } from "./getModule.js";
 import { CreateTypeAndName, Operation, WiredTigerCursor, WiredTigerSession } from "./types.js";
 
 
-const db = new WiredTigerDB("WT-HOME", { in_memory: true, create: true, statistics: ["all"] });
+let db = new WiredTigerDB("WT-HOME", { in_memory: true, create: true, statistics: ["all"] });
 db.open();
 let current = "A";
 // db.native.addExtractor(
@@ -37,7 +37,7 @@ let current = "A";
 //   null
 // );
 
-const col = new Collection(db, "Hello", {
+let col = new Collection(db, "Hello", {
   config: {
     // colgroups: [
     //   {
@@ -51,7 +51,7 @@ const col = new Collection(db, "Hello", {
     // ]
   },
   schema: {
-    _id: schema.CharArray(17),
+    _id: schema.String(),
     stringThing: schema.String(),
     intThing: schema.Int(),
     doubleThing: schema.Double(),
@@ -78,12 +78,13 @@ col.createIndex("reverse", ["stringThing"], ",collator=reverse");
 col.createIndex("nocase", ["stringThing"], ",collator=nocase");
 // col.createIndex("test", [], ",key_format=SS,extractor=TEST,collator=TEST");
 col.createIndex("words", ["stringThing"], ",key_format=S,extractor=words");
-col.createIndex("ngrams3", ["stringThing"], ",key_format=S,extractor=ngrams,collator=nocase,app_metadata={ngrams=3}");
+col.createIndex("ngrams3", ["stringThing"], ",key_format=S,extractor=ngrams,app_metadata={ngrams=3}");
 col.createIndex("ngrams5", ["stringThing"], ",key_format=S,extractor=ngrams,app_metadata={ngrams=5}");
 col.createIndex("double", ["doubleThing"]);
-col.createIndex("bigint", ["bigThing"]);
-col.createIndex("bsonBigint", ["bigThing"]);
-col.insertMany([{
+// col.createIndex("bigThing", ["bigThing"]); // TODO: this causes a WT_DUPLICATE_KEY error, but only when it's included in the find projection
+// col.createIndex("bsonBigThing", ["bsonBigThing"]); // TODO: this causes an invalidPointer error
+col.insertMany([
+  {
     _id: "aaa",
     stringThing: "test1 z",
     intThing: 10,
@@ -111,7 +112,7 @@ col.insertMany([{
   },
   {
     _id: "BBB",
-    stringThing: new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+    stringThing: " test5",
     intThing: 2,
     doubleThing: -Math.random(),
     longThing: 0x7fffffffffffffffn,
@@ -208,8 +209,7 @@ col.insertOne({
 //   count++;
 // }
 // console.log("Found: ", count);
-console.log("STARTED FIND");
-const cursor = col.find([
+let cursor = col.find([
   {
     operation: Operation.AND,
     conditions: [
@@ -217,18 +217,53 @@ const cursor = col.find([
       { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
     ]
   }
-], { columns: ["_id", "stringThing"] });
-console.log("FINISHED FIND");
+], { columns: ["bigThing"] });
+console.log(cursor.toArray());
+cursor.close();
+
+col.updateMany([
+  {
+    operation: Operation.AND,
+    conditions: [
+      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    ]
+  }
+], { $set: { intThing: 1 } });
+cursor = col.find([
+  {
+    operation: Operation.AND,
+    conditions: [
+      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    ]
+  }
+], { columns: ["_id", "intThing"] });
 console.log(cursor.nextBatch());
 cursor.close();
 
+console.log(col.deleteMany([
+  {
+    operation: Operation.AND,
+    conditions: [
+      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    ]
+  }
+]));
 
 let next;
 function stats(type: `statistics:${CreateTypeAndName}`) {
   const cursor = col.db.openSession().openCursor(type, null);
-  const obj: Record<string, number | bigint> = {};
+  const obj: Record<string, Record<string, number | bigint>> = {};
   while(next = cursor.next()) {
-    console.log(cursor.getKey(), cursor.getValue());
+    const [fullKey, _strValue, numValue] = cursor.getValue();
+    const [prefix, key] = fullKey.split(": ");
+    if (!obj[prefix]) {
+      obj[prefix] = {};
+    }
+    obj[prefix][key] = numValue;
+    // console.log(cursor.getKey(), );
     // const buffer: Buffer = cursor.getValue();
     // const sepIndex = buffer.indexOf(0);
     // const sep2Index = buffer.indexOf(0, sepIndex + 1);
@@ -238,9 +273,15 @@ function stats(type: `statistics:${CreateTypeAndName}`) {
 
   return obj;
 }
+console.log(stats("statistics:table:Hello"));
 
+
+col = null;
+db.close();
+
+db = null;
+gc({execution: "sync", flavor: "last-resort", type: "major"});
 // console.log(stats("statistics:table:Hello")["cursor: next calls"]);
 // console.log(stats("statistics:index:Hello:ngrams5")["cursor: next calls"]);
 
 
-//db.close();

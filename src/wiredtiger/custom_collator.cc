@@ -43,6 +43,12 @@ namespace wiredtiger {
     const char *s1 = (const char *)v1->data;
     const char *s2 = (const char *)v2->data;
     *cmp = strcasecmp(s1, s2);
+    if (*cmp > 0) {
+      *cmp = 1;
+    }
+    if (*cmp < 0) {
+      *cmp = -1;
+    }
     return (0);
   }
 

@@ -47,6 +47,7 @@ namespace wiredtiger {
     if (exRef->references == 0) {
       ngramExtractors.erase(exRef->key);
       free(exRef->key);
+      free(exRef);
     }
     return 0;
   }
@@ -71,13 +72,13 @@ namespace wiredtiger {
       }
       if (strLen <= ngramLength) {
           result_cursor->set_key(result_cursor, token);
-          RETURN_AND_FREE_IF_ERROR(result_cursor->insert(result_cursor), ngram);
+          RETURN_AND_FREE_IF_ERROR_NOT_NOTFOUND_OR_DUPLICATE(result_cursor->insert(result_cursor), ngram);
       }
       else {
-        for (int i = 0; i < strLen - ngramLength; i++) {
+        for (int i = 0; i < strLen - (ngramLength - 1); i++) {
           memcpy(ngram, token + i, ngramLength);
           result_cursor->set_key(result_cursor, ngram);
-          RETURN_AND_FREE_IF_ERROR(result_cursor->insert(result_cursor), ngram);
+          RETURN_AND_FREE_IF_ERROR_NOT_NOTFOUND_OR_DUPLICATE(result_cursor->insert(result_cursor), ngram);
         }
       }
     }
@@ -143,7 +144,7 @@ namespace wiredtiger {
     char* token;
     while ((token = strtok_r(buffer, " ", &buffer))) {
       result_cursor->set_key(result_cursor, token);
-      RETURN_IF_ERROR(result_cursor->insert(result_cursor));
+      RETURN_IF_ERROR_NOT_NOTFOUND_OR_DUPLICATE(result_cursor->insert(result_cursor));
     }
 
     return 0;

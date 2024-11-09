@@ -24,24 +24,43 @@ static WT_EXTRACTOR ngramsIndex = { extractNgrams, customizeNgrams, terminateNgr
 
 class WiredTigerDB {
   private:
+    bool _isOpen = false;
 	public:
     WT_CONNECTION *conn;
 
     ~WiredTigerDB() {
-      printf("Destroyed?\n");
+      // free the collator/extractor?
     }
     WiredTigerDB(): conn(NULL)
     {
     }
 
     int open(char* directory, char* options) {
-      int ret = wiredtiger_open(directory, NULL, options, &this->conn);
+      if (_isOpen) {
+        return WT_NOTFOUND;// TODO: real error
+      }
+      RETURN_IF_ERROR(wiredtiger_open(directory, NULL, options, &this->conn));
       RETURN_IF_ERROR(conn->add_collator(conn, "nocase", &nocasecoll, NULL));
       RETURN_IF_ERROR(conn->add_collator(conn, "reverse", &reversecoll, NULL));
       RETURN_IF_ERROR(conn->add_collator(conn, "regular", &regularcoll, NULL));
       RETURN_IF_ERROR(conn->add_extractor(conn, "words", &wordsIndex, NULL));
       RETURN_IF_ERROR(conn->add_extractor(conn, "ngrams", &ngramsIndex, NULL));
-      return ret;
+      _isOpen = true;
+      return 0;
+    }
+
+    int close(char* config) {
+      if (!_isOpen) {
+        return WT_NOTFOUND;// TODO: real error
+      }
+      _isOpen = false;
+      RETURN_IF_ERROR(conn->close(conn, config));
+      conn = NULL;
+      return 0;
+    }
+
+    bool isOpen() {
+      return _isOpen;
     }
 
     int addExtractor(char* name, CustomExtractor* extractor) {

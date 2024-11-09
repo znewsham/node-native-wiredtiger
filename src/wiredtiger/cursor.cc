@@ -41,13 +41,31 @@ namespace wiredtiger {
     bool forValues,
     bool forWrite
   ) {
+    std::vector<WT_ITEM>* wtItems;
+    if (forWrite) {
+      wtItems = new std::vector<WT_ITEM>(valueArray->size());
+    }
     for (size_t i = 0; i < columnCount(forValues); i++) {
       Format format = formatAt(forValues, i);
-      if (format.format == FIELD_WT_ITEM || format.format == FIELD_WT_UITEM) {
-        WT_ITEM item;
-        item.data = (*valueArray)[i].queryValue.value.valuePtr;
-        item.size = (*valueArray)[i].queryValue.size;
-        av_ptr(*argList, WT_ITEM*, &item);
+      if (
+        format.format == FIELD_WT_ITEM
+        || format.format == FIELD_WT_UITEM
+        || format.format == FIELD_WT_ITEM_BIGINT
+        || format.format == FIELD_WT_ITEM_DOUBLE
+      ) {
+        // when writing, valueArray should be considered const and not modified
+        // setting valueArray.wtItem.* relies on the shape of wtItem and queryValue being identical. Gross.
+        // for reading - there is no such requirement and we dont want the cost of allocating a new WT_ITEM vector
+        if (forWrite) {
+          (*wtItems)[i].data = (*valueArray)[i].queryValue.value.valuePtr;
+          (*wtItems)[i].size = (*valueArray)[i].queryValue.size;
+          av_ptr(*argList, WT_ITEM*, &(*wtItems)[i]);
+        }
+        else {
+          // we fake that a QueryValue is a WT_ITEM (they're at least the same size)
+          // in populate we'll pull the data out and rebuild this item correctly
+          av_ptr(*argList, WT_ITEM*, &(*valueArray)[i]);
+        }
       }
       else {
         if (forWrite) {
@@ -67,6 +85,9 @@ namespace wiredtiger {
           }
         }
       }
+    }
+    if (forWrite) {
+      delete wtItems;
     }
   }
 
@@ -97,8 +118,15 @@ namespace wiredtiger {
     av_call(argList);
     for (size_t i = 0; i < columnCount(forValues); i++) {
       Format format = formatAt(forValues, i);
-      if (format.format == FIELD_WT_ITEM || format.format == FIELD_WT_UITEM) {
-        WT_ITEM* wtItem = (WT_ITEM*)&valueArray[i];
+      // TODO: I don't love that the cursor needs to know about this - I think this should use the raw types
+      if (
+        format.format == FIELD_WT_ITEM
+        || format.format == FIELD_WT_UITEM
+        || format.format == FIELD_WT_ITEM_BIGINT
+        || format.format == FIELD_WT_ITEM_DOUBLE
+      ) {
+        // implementation must match populateInner's binary read.
+        WT_ITEM* wtItem = (WT_ITEM*)&(*valueArray)[i];
         void* value = (void*)wtItem->data;
         size_t size = wtItem->size;
 
@@ -127,7 +155,10 @@ namespace wiredtiger {
     void (*funcptr)(WT_CURSOR* cursor, ...),
     std::vector<QueryValueOrWT_ITEM>* valueArray
   ) {
-    cursor->set_value(cursor, (*valueArray)[0].wtItem);
+    WT_ITEM item;
+    item.size = (*valueArray)[0].queryValue.size;
+    item.data = (*valueArray)[0].queryValue.value.valuePtr;
+    funcptr(cursor, &item);
   }
 
   int Cursor::populateRaw(
@@ -135,11 +166,12 @@ namespace wiredtiger {
     std::vector<QueryValueOrWT_ITEM>* valueArray
   ) {
     WT_ITEM item;
-    int result = cursor->get_value(cursor, &item);
+    int result = funcptr(cursor, &item);
     RETURN_IF_ERROR(result);
     (*valueArray)[0].queryValue.dataType = FIELD_WT_ITEM;
     (*valueArray)[0].queryValue.value.valuePtr = (void*)item.data;
     (*valueArray)[0].queryValue.size = item.size;
+    (*valueArray)[0].queryValue.noFree = true;
     return result;
   }
 
@@ -200,6 +232,7 @@ namespace wiredtiger {
     return cursor->insert(cursor);
   }
 
+
   int Cursor::remove() {
     return cursor->remove(cursor);
   }
@@ -213,6 +246,7 @@ namespace wiredtiger {
   }
 
   int Cursor::close() {
+    isClosed = true;
     return cursor->close(cursor);
   }
 

@@ -4,6 +4,7 @@
 #include "db.h"
 #include "table.h"
 #include "session.h"
+#include "multi_cursor.h"
 
 #include <vector>
 
@@ -35,6 +36,21 @@ namespace wiredtiger {
     return tableName;
   }
 
+  int WiredTigerTable::initTableFormats() {
+    if (keyFormats.size() != 0) {
+      return 0;
+    }
+    WT_CONFIG_PARSER* parser;
+    RETURN_IF_ERROR(wiredtiger_config_parser_open(NULL, tableConfig, strlen(tableConfig), &parser));
+    WT_CONFIG_ITEM item;
+    RETURN_IF_ERROR(parser->get(parser, "key_format", &item));
+    RETURN_IF_ERROR(parseFormat(item.str, item.len, &keyFormats));
+
+    RETURN_IF_ERROR(parser->get(parser, "value_format", &item));
+    RETURN_IF_ERROR(parseFormat(item.str, item.len, &valueFormats));
+    return parser->close(parser);
+  }
+
 
 
   int WiredTigerTable::initTable(WiredTigerSession* session) {
@@ -42,16 +58,7 @@ namespace wiredtiger {
       return 0;
     }
     isInitted = true;
-    WT_CONFIG_PARSER* parser;
-    RETURN_IF_ERROR(wiredtiger_config_parser_open(NULL, tableConfig, strlen(tableConfig), &parser));
-    WT_CONFIG_ITEM item;
-    RETURN_IF_ERROR(parser->get(parser, "key_format", &item));
-    RETURN_IF_ERROR(parseFormat(item.str, item.len, &keyFormats));
-    // free(keyFormat);
-
-    RETURN_IF_ERROR(parser->get(parser, "value_format", &item));
-    RETURN_IF_ERROR(parseFormat(item.str, item.len, &valueFormats));
-
+    initTableFormats();
     WiredTigerSession* actualSession = session;
     if (session == NULL) {
       WT_SESSION* wtSession;
@@ -63,7 +70,7 @@ namespace wiredtiger {
       tableConfig
     );
     if (session == NULL) {
-      actualSession->session->close(actualSession->session, NULL);
+      actualSession->close(NULL);
     }
     return result;
   }
@@ -78,11 +85,11 @@ namespace wiredtiger {
     }
   }
   std::vector<Format>* WiredTigerTable::getKeyFormats() {
-    this->initTable(NULL); // TODO pass a session?
+    initTableFormats();
     return &keyFormats;
   }
   std::vector<Format>* WiredTigerTable::getValueFormats() {
-    this->initTable(NULL); // TODO pass a session?
+    initTableFormats();
     return &valueFormats;
   }
 
@@ -95,20 +102,90 @@ namespace wiredtiger {
     return 0;
   }
 
+  int WiredTigerTable::deleteMany(
+    WiredTigerSession* session,
+    std::vector<QueryCondition>* conditions,
+    int* deletedCount
+  ) {
+    this->initTable(session);
+    this->ensureSpecName();
+    Cursor* deleteCursor;
+    session->openCursor(specName, &deleteCursor);
+    MultiCursor findCursor(session, tableName, conditions);
+    int error;
+    std::vector<unique_ptr<std::vector<QueryValueOrWT_ITEM>>> keys;
+    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    while ((error = findCursor.next(&keyArray)) == 0) {
+      keys.push_back(unique_ptr<std::vector<QueryValueOrWT_ITEM>>(keyArray));
+      deleteCursor->setKey(keyArray);
+      int error = deleteCursor->remove();
+      if (error == 0) {
+        *deletedCount+=1;
+      }
+      if (error != 0 && error != WT_NOTFOUND) {
+        delete deleteCursor;
+        return error;
+      }
+    }
+    delete deleteCursor;
+    return 0;
+  }
 
   int WiredTigerTable::insertMany(WiredTigerSession* session, std::vector<std::unique_ptr<EntryOfVectors>> *documents) {
     this->initTable(session);
-    WT_SESSION* wtSession = session->session;
-    WT_CURSOR* wtCursor;
-    RETURN_IF_ERROR(wtSession->open_cursor(wtSession, specName, NULL, NULL, &wtCursor));
-    Cursor* cursor = new Cursor(wtCursor);
+    this->ensureSpecName();
+    Cursor* cursor;
+    RETURN_IF_ERROR(session->openCursor(specName, (char*)"overwrite=false", &cursor));
     // WT_CURSOR* cursor = wtCursor;
     for(size_t i = 0; i < documents->size(); i++) {
       EntryOfVectors& document = *documents->at(i);
       cursor->setKey(document.keyArray);
       cursor->setValue(document.valueArray);
-      RETURN_IF_ERROR(cursor->insert());
+      RETURN_AND_DELETE_IF_ERROR(cursor->insert(), cursor);
     }
+    delete cursor;
+    return 0;
+  }
+
+  int WiredTigerTable::updateMany(
+    WiredTigerSession* session,
+    std::vector<QueryCondition>* conditions,
+    std::vector<QueryValueOrWT_ITEM>* newValues,
+    int* updatedCount
+  ) {
+    this->initTable(session);
+    this->ensureSpecName();
+    Cursor* updateCursor;
+    RETURN_IF_ERROR(session->openCursor(specName, (char*)"overwrite=false", &updateCursor));
+    MultiCursor findCursor(session, tableName, conditions);
+    int error;
+    // we can't delete keys until we're done, because we use them to dedupe overlapping index bounds
+    std::vector<unique_ptr<std::vector<QueryValueOrWT_ITEM>>> keys;
+    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    std::vector<QueryValueOrWT_ITEM>* valueArray = NULL;
+    while ((error = findCursor.next(&keyArray, &valueArray)) == 0) {
+      keys.push_back(unique_ptr<std::vector<QueryValueOrWT_ITEM>>(keyArray));
+      updateCursor->setKey(keyArray);
+      for (size_t i = 0; i < valueArray->size(); i++) {
+        if ((*newValues)[i].queryValue.dataType != FIELD_PADDING) {
+          (*valueArray)[i].queryValue.value.valuePtr = (*newValues)[i].queryValue.value.valuePtr;
+          (*valueArray)[i].queryValue.value.valueUint = (*newValues)[i].queryValue.value.valueUint;
+          (*valueArray)[i].queryValue.size = (*newValues)[i].queryValue.size;
+        }
+      }
+      updateCursor->setValue(valueArray);
+      int error = updateCursor->update();
+      if (error == 0) {
+        *updatedCount+=1;
+      }
+      delete valueArray;
+      if (error != 0 && error != WT_NOTFOUND) {
+        delete updateCursor;
+        return error;
+      }
+      RETURN_AND_DELETE_IF_ERROR(updateCursor->reset(), updateCursor);
+    }
+    delete updateCursor;
     return 0;
   }
 }

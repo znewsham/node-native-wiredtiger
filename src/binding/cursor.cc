@@ -17,7 +17,7 @@ namespace wiredtiger::binding {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.reset();
     if (result != 0) {
-      THROW(Exception::TypeError, that.cursor->session->strerror(that.cursor->session, result));
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
   }
 
@@ -25,11 +25,8 @@ namespace wiredtiger::binding {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.close();
     if (result != 0) {
-      THROW(Exception::TypeError, that.cursor->session->strerror(that.cursor->session, result));
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
-    // if we implement a wrap class we'll need this
-    Cursor* thatPointer = static_cast<Cursor*>(args.Holder()->GetAlignedPointerFromInternalField(0));
-    delete thatPointer;
   }
 
   void CursorNext(const FunctionCallbackInfo<Value>& args) {
@@ -37,7 +34,7 @@ namespace wiredtiger::binding {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.next();
     if (result != 0 && result != WT_NOTFOUND) {
-      THROW(Exception::TypeError, that.cursor->session->strerror(that.cursor->session, result));
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
     Return(Boolean::New(isolate, result == 0 ? true : false), args);
   }
@@ -47,7 +44,7 @@ namespace wiredtiger::binding {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.prev();
     if (result != 0 && result != WT_NOTFOUND) {
-      THROW(Exception::TypeError, that.cursor->session->strerror(that.cursor->session, result));
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
     Return(Boolean::New(isolate, result == 0 ? true : false), args);
   }
@@ -137,12 +134,12 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
 
-    std::vector<QueryValueOrWT_ITEM> values(args.Length());
+    std::vector<QueryValueOrWT_ITEM>* values = new std::vector<QueryValueOrWT_ITEM>(args.Length());
     for (int i = 0; i < args.Length(); i++) {
       int error = extractValue(
         args[i],
         isolate,
-        &values[i].queryValue,
+        &(*values)[i].queryValue,
         that.formatAt(false, i)
       );
       if (error != 0) {
@@ -151,8 +148,7 @@ namespace wiredtiger::binding {
       }
     }
     // TODO: this can't be freed until after the cursor executes (e.g., insert/update/search/searchNear)
-    that.setKey(&values);
-    //freeQueryValues(values, args.Length());
+    that.setKey(values);
   }
 
   void CursorSetValue(const FunctionCallbackInfo<Value>& args) {
@@ -204,16 +200,18 @@ namespace wiredtiger::binding {
   void CursorUpdate(const FunctionCallbackInfo<Value>& args) {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.update();
-    if (result) {
+    if (result != 0 && result != WT_NOTFOUND) {
       THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
+    Return(Boolean::New(Isolate::GetCurrent(), result == 0), args);
   }
   void CursorRemove(const FunctionCallbackInfo<Value>& args) {
     Cursor& that = Unwrap<Cursor>(args.Holder());
     int result = that.remove();
-    if (result) {
+    if (result != 0 && result != WT_NOTFOUND) {
       THROW(Exception::TypeError, wiredtiger_strerror(result));
     }
+    Return(Boolean::New(Isolate::GetCurrent(), result == 0), args);
   }
   void CursorBound(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
@@ -318,22 +316,23 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     Local<Function> fn = Deref(isolate, CursorConstructorTmpl)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
     Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
-    Cursor* cursor = new Cursor(wtCursor); // deleted on close
+    Cursor* cursor = new Cursor(wtCursor);
     obj->SetAlignedPointerInInternalField(0, cursor);
+    BindClassToV8<Cursor>(isolate, obj, cursor);
     return obj;
   }
 
 
-  Local<Object> CursorGetNew(WT_SESSION *session, char* uri, char* config) {
+  Local<Object> CursorGetNew(WiredTigerSession *session, char* uri, char* config) {
     Isolate* isolate = Isolate::GetCurrent();
     Local<Function> fn = Deref(isolate, CursorConstructorTmpl)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
     Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
-    WT_CURSOR* WTCursor;
 
     // TODO: handle the result
-    session->open_cursor(session, uri, NULL, config, &WTCursor);
-    Cursor* cursor = new Cursor(WTCursor); // deleted on close
+    Cursor* cursor;
+    session->openCursor(uri, config, &cursor);
     obj->SetAlignedPointerInInternalField(0, cursor);
+    BindClassToV8<Cursor>(isolate, obj, cursor);
     return obj;
   }
 

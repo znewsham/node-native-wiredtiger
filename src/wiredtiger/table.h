@@ -22,17 +22,28 @@ class WiredTigerTable {
     std::vector<Format> valueFormats;
 
   protected:
-    char* specName;
+    char* specName = NULL;
     WiredTigerDB *db;
+    inline void ensureSpecName() {
+      if (specName == NULL) {
+        specName = (char*)calloc(sizeof(char), strlen(tableName) + 7);
+        sprintf(specName, "table:%s", tableName);
+      }
+    }
+    inline int initTableFormats();
+    int initTable(WiredTigerSession* session);
 
   public:
 
     WiredTigerTable(WiredTigerDB *d, char* _tableName, char* _config);
 
     ~WiredTigerTable();
-    int initTable(WiredTigerSession* session);
     int insertMany(WiredTigerSession* session, std::vector<std::unique_ptr<EntryOfVectors>> *documents);
     int createIndex(WiredTigerSession* session, char* indexName, char* config);
+
+    // TODO: int find();
+    int deleteMany(WiredTigerSession* session, std::vector<QueryCondition>* conditions, int* deletedCount);
+    int updateMany(WiredTigerSession* session, std::vector<QueryCondition>* conditions, std::vector<QueryValueOrWT_ITEM>* values, int* updatedCount);
     std::vector<Format>* getKeyFormats();
     std::vector<Format>* getValueFormats();
 

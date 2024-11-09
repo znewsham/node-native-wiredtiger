@@ -21,16 +21,9 @@ namespace wiredtiger::binding {
     char* config = ArgToCharPointer(isolate, args[2]);
 
     WiredTigerTable* table = new WiredTigerTable(&db, tableName, config);
-    // TODO: defer this until the first time it's used? Hard if another session wants to use it.
-    // Will need to expose it through the binding or better yet, expose relevant UX (e.g., create index) through the table
-    // int result = table->initTable(NULL);
-    //if (result == 0) {
-      handle->SetAlignedPointerInInternalField(0, table);
-      Return(args.This(), args);
-    // }
-    // else {
-    //   THROW(Exception::TypeError, wiredtiger_strerror(result));
-    // }
+    handle->SetAlignedPointerInInternalField(0, table);
+    BindClassToV8<WiredTigerTable>(isolate, handle, table);
+    Return(args.This(), args);
     free(tableName);
     free(config);
   }
@@ -44,6 +37,44 @@ namespace wiredtiger::binding {
   }
 
 
+  void ThrowError(int result, const FunctionCallbackInfo<Value>& args) {
+    if (result == CONDITION_NOT_OBJECT) {
+      THROW(Exception::TypeError, "Invalid Condition (not an object)");
+    }
+    else if (result == INDEX_NOT_STRING) {
+      THROW(Exception::TypeError, "Invalid Condition (index not a string)");
+    }
+    else if (result == OPERATION_NOT_INTEGER) {
+      THROW(Exception::TypeError, "Invalid Condition (operation not an integer)");
+    }
+    else if (result == VALUES_NOT_ARRAY) {
+      THROW(Exception::TypeError, "Invalid Condition (values not an array)");
+    }
+    else if (result == CONDITIONS_NOT_ARRAY) {
+      THROW(Exception::TypeError, "Invalid Condition (conditions not an array)");
+    }
+    else if (result == INVALID_VALUE_TYPE) {
+      THROW(Exception::TypeError, "Invalid Condition (invalid value type)");
+    }
+    else if (result == VALUES_AND_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (can't specify sub conditions and values)");
+    }
+    else if (result == INVALID_OPERATOR) {
+      THROW(Exception::TypeError, "Invalid Condition (AND/OR mismatch with values/conditions)");
+    }
+    else if (result == NO_VALUES_OR_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (missing values or conditions)");
+    }
+    else if (result == EMPTY_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (empty conditions)");
+    }
+    else if (result == EMPTY_VALUES) {
+      THROW(Exception::TypeError, "Invalid Condition (empty values)");
+    }
+    else {
+      THROW(Exception::TypeError, "Unknown error");
+    }
+  }
 
   void WiredTigerTableFind(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
@@ -83,53 +114,11 @@ namespace wiredtiger::binding {
       session = GetSession(that.getDb());
     }
     findOptions.session = session;
-    that.initTable(session);
 
     conditions = new std::vector<QueryCondition>(arr->Length()); // deleted when the find cursor closes
     int result = parseConditions(isolate, context, &arr, conditions, that.getValueFormats());
     if (result != 0) {
-      if (result == CONDITION_NOT_OBJECT) {
-        THROW(Exception::TypeError, "Invalid Condition (not an object)");
-      }
-      else if (result == INDEX_NOT_STRING) {
-        THROW(Exception::TypeError, "Invalid Condition (index not a string)");
-      }
-      else if (result == OPERATION_NOT_INTEGER) {
-        THROW(Exception::TypeError, "Invalid Condition (operation not an integer)");
-      }
-      else if (result == VALUES_NOT_ARRAY) {
-        THROW(Exception::TypeError, "Invalid Condition (values not an array)");
-      }
-      else if (result == CONDITIONS_NOT_ARRAY) {
-        THROW(Exception::TypeError, "Invalid Condition (conditions not an array)");
-      }
-      else if (result == INVALID_VALUE_TYPE) {
-        THROW(Exception::TypeError, "Invalid Condition (invalid value type)");
-      }
-      else if (result == VALUES_AND_CONDITIONS) {
-        THROW(Exception::TypeError, "Invalid Condition (can't specify sub conditions and values)");
-      }
-      else if (result == INVALID_OPERATOR) {
-        THROW(Exception::TypeError, "Invalid Condition (AND/OR mismatch with values/conditions)");
-      }
-      else if (result == NO_VALUES_OR_CONDITIONS) {
-        THROW(Exception::TypeError, "Invalid Condition (missing values or conditions)");
-      }
-      else if (result == EMPTY_CONDITIONS) {
-        THROW(Exception::TypeError, "Invalid Condition (empty conditions)");
-      }
-      else if (result == EMPTY_VALUES) {
-        THROW(Exception::TypeError, "Invalid Condition (empty values)");
-      }
-      else {
-        THROW(Exception::TypeError, "Unknown error");
-      }
-      return;
-    }
-
-    // free(tableName); can't free it here
-    if (result != 0) {
-      THROW(Exception::TypeError, wiredtiger_strerror(result));
+      return ThrowError(result, args);
     }
     Local<Object> object = wiredtiger::binding::FindCursorGetNew(
       that.getTableName(),
@@ -148,10 +137,168 @@ namespace wiredtiger::binding {
     Return(object, args);
   }
 
-  void WiredTigerTableInsertMany(const FunctionCallbackInfo<Value>& args) {
+  // stupid - I extracted the wrong function, this is used from one place
+  int ExtractDocuments(
+    const FunctionCallbackInfo<Value>& args,
+    WiredTigerTable* that,
+    Local<Array> arr,
+    std::vector<std::unique_ptr<EntryOfVectors>>* converted
+  ) {
     Isolate* isolate = Isolate::GetCurrent();
-    WiredTigerTable& that = Unwrap<WiredTigerTable>(args.Holder());
     Local<Context> context = isolate->GetCurrentContext();
+    int error;
+    for (uint32_t i = 0; i < arr->Length(); i++) {
+      Local<Value> holder = arr->Get(context, i).ToLocalChecked();
+      if (!holder->IsArray()) {
+        THROW_RETURN(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]", -1);
+      }
+      Local<Array> kvPair = Local<Array>::Cast(holder);
+
+      Local<Value> keyHolder = kvPair->Get(context, 0).ToLocalChecked();
+      Local<Value> valuesHolder = kvPair->Get(context, 1).ToLocalChecked();
+      if (kvPair->Length() != 2 || !keyHolder->IsArray() || !valuesHolder->IsArray()) {
+        THROW_RETURN(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]", -1);
+      }
+
+      Local<Array> keys = Local<Array>::Cast(keyHolder);
+      Local<Array> values = Local<Array>::Cast(valuesHolder);
+      size_t keySize = that->getKeyFormats()->size();
+      size_t valueSize = that->getValueFormats()->size();
+      std::vector<QueryValueOrWT_ITEM>* convertedKeys = new std::vector<QueryValueOrWT_ITEM>(keySize); // deleted with the EntryOfVectors
+      std::vector<QueryValueOrWT_ITEM>* convertedValues = new std::vector<QueryValueOrWT_ITEM>(valueSize); // deleted with the EntryOfVectors
+      error = extractValues(
+        keys,
+        isolate,
+        context,
+        convertedKeys,
+        that->getKeyFormats()
+      );
+      if (error) {
+        THROW_RETURN(Exception::TypeError, "Invalid key type", error);
+      }
+      if (!valuesHolder->IsArray()) {
+        THROW_RETURN(Exception::TypeError, "Second argument must be an array where each entry is this form [key, [value1, ...valuen]]", i);
+      }
+      error = extractValues(
+        values,
+        isolate,
+        context,
+        convertedValues,
+        that->getValueFormats()
+      );
+      if (error) {
+        // freeConvertedKVPairs(&converted);
+        THROW_RETURN(Exception::TypeError, "Invalid value type", error);
+      }
+      (*converted)[i] = std::unique_ptr<EntryOfVectors>(new EntryOfVectors());
+      (*converted)[i]->keyArray = convertedKeys;
+      (*converted)[i]->valueArray = convertedValues;
+    }
+    return 0;
+  }
+
+  void WiredTigerTableUpdateMany(const FunctionCallbackInfo<Value>& args) {
+    Isolate* isolate = Isolate::GetCurrent();
+    Local<Context> context = isolate->GetCurrentContext();
+    WiredTigerTable& that = Unwrap<WiredTigerTable>(args.Holder());
+    if (args.Length() != 2) {
+      if ((!args[0]->IsArray() && !args[0]->IsUndefined()) || (!args[1]->IsArray())) {
+        THROW(Exception::TypeError, "If provided the argument must be an array of conditions");
+      }
+    }
+    Local<Array> conditionsArray;
+    if (args[0]->IsArray()) {
+      conditionsArray = Local<Array>::Cast(args[0]);
+    }
+    else {
+      conditionsArray = Array::New(isolate, 0);
+    }
+    Local<Array> newValuesArray;
+    newValuesArray = Local<Array>::Cast(args[1]);
+
+    std::vector<QueryCondition> conditions(conditionsArray->Length());
+    int result = parseConditions(isolate, context, &conditionsArray, &conditions, that.getValueFormats());
+    std::vector<Format>* valueFormats = that.getValueFormats();
+    std::vector<QueryValueOrWT_ITEM> newValues(valueFormats->size());
+    if (newValues.size() != newValuesArray->Length()) {
+      THROW(Exception::TypeError, "Values array length must match");
+    }
+    result = extractValues(newValuesArray, isolate, context, &newValues, valueFormats);
+    if (result != 0) {
+      return ThrowError(result, args);
+    }
+    int updatedCount;
+    WiredTigerSession* session = GetSession(that.getDb());
+    result = session->beginTransaction(NULL);
+    if (result) {
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+    result = that.updateMany(
+      session,
+      &conditions,
+      &newValues,
+      &updatedCount
+    );
+
+    if (result) {
+      session->rollbackTransaction(NULL);
+      session->close(NULL);
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+    result = session->commitTransaction(NULL);
+    if (result) {
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+
+    Return(Int32::New(isolate, updatedCount), args);
+  }
+
+  void WiredTigerTableDeleteMany(const FunctionCallbackInfo<Value>& args) {
+    Isolate* isolate = Isolate::GetCurrent();
+    Local<Context> context = isolate->GetCurrentContext();
+    WiredTigerTable& that = Unwrap<WiredTigerTable>(args.Holder());
+    if (args.Length() != 1) {
+      if (!args[0]->IsArray() && !args[0]->IsUndefined()) {
+        THROW(Exception::TypeError, "If provided the argument must be an array of conditions");
+      }
+    }
+
+
+    Local<Array> arr;
+    if (args.Length() >= 1 && args[0]->IsArray()) {
+      arr = Local<Array>::Cast(args[0]);
+    }
+    else {
+      arr = Array::New(isolate, 0);
+    }
+
+    WiredTigerSession* session = GetSession(that.getDb());
+    int result;
+
+    std::vector<QueryCondition> conditions(arr->Length());
+    result = parseConditions(isolate, context, &arr, &conditions, that.getValueFormats());
+    if (result != 0) {
+      return ThrowError(result, args);
+    }
+    int deletedCount = 0;
+    result = session->beginTransaction(NULL);
+    if (result) {
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+    result = that.deleteMany(session, &conditions, &deletedCount);
+    if (result != 0) {
+      session->rollbackTransaction(NULL);
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+    result = session->commitTransaction(NULL);
+    if (result) {
+      THROW(Exception::TypeError, wiredtiger_strerror(result));
+    }
+    Return(Int32::New(isolate, deletedCount), args);
+  }
+
+  void WiredTigerTableInsertMany(const FunctionCallbackInfo<Value>& args) {
+    WiredTigerTable& that = Unwrap<WiredTigerTable>(args.Holder());
     if (args.Length() != 1 || !args[0]->IsArray()) {
       THROW(Exception::TypeError, "Must specify an array of entries.");
     }
@@ -162,66 +309,36 @@ namespace wiredtiger::binding {
     std::vector<std::unique_ptr<EntryOfVectors>> converted(arr->Length());
 
     WiredTigerSession* session = GetSession(that.getDb());
-    for (uint32_t i = 0; i < arr->Length(); i++) {
-      Local<Value> holder = arr->Get(context, i).ToLocalChecked();
-      if (!holder->IsArray()) {
-        THROW(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]");
-      }
-      Local<Array> kvPair = Local<Array>::Cast(holder);
-
-      Local<Value> keyHolder = kvPair->Get(context, 0).ToLocalChecked();
-      Local<Value> valuesHolder = kvPair->Get(context, 1).ToLocalChecked();
-      if (kvPair->Length() != 2 || !keyHolder->IsArray() || !valuesHolder->IsArray()) {
-        THROW(Exception::TypeError, "argument must be an array where each entry is this form [[key], [value1, ...valuen]]");
-      }
-
-      Local<Array> keys = Local<Array>::Cast(keyHolder);
-      Local<Array> values = Local<Array>::Cast(valuesHolder);
-      size_t keySize = that.getKeyFormats()->size();
-      size_t valueSize = that.getValueFormats()->size();
-      std::vector<QueryValueOrWT_ITEM>* convertedKeys = new std::vector<QueryValueOrWT_ITEM>(keySize); // deleted with the EntryOfVectors
-      std::vector<QueryValueOrWT_ITEM>* convertedValues = new std::vector<QueryValueOrWT_ITEM>(valueSize); // deleted with the EntryOfVectors
-      error = that.initTable(session);
+    error = ExtractDocuments(args, &that, arr, &converted);
+    if (error) {
+      session->close(NULL);
+      // no need to throw because ExtractMultiCursorConditions already did
+      return;
+    }
+    bool hasTransaction = false;
+    if (converted.size() > 1) {
+      error = session->beginTransaction(NULL);
+      hasTransaction = true;
       if (error) {
-        session->session->close(session->session, NULL);
         THROW(Exception::TypeError, wiredtiger_strerror(error));
       }
-      error = extractValues(
-        keys,
-        isolate,
-        context,
-        convertedKeys,
-        that.getKeyFormats()
-      );
-      if (error) {
-        session->session->close(session->session, NULL);
-        THROW(Exception::TypeError, "Invalid key type");
-      }
-      if (!valuesHolder->IsArray()) {
-        THROW(Exception::TypeError, "Second argument must be an array where each entry is this form [key, [value1, ...valuen]]");
-      }
-      error = extractValues(
-        values,
-        isolate,
-        context,
-        convertedValues,
-        that.getValueFormats()
-      );
-      if (error) {
-        // freeConvertedKVPairs(&converted);
-        session->session->close(session->session, NULL);
-        THROW(Exception::TypeError, "Invalid value type");
-      }
-      converted[i] = std::unique_ptr<EntryOfVectors>(new EntryOfVectors());
-      converted[i]->keyArray = convertedKeys;
-      converted[i]->valueArray = convertedValues;
     }
     error = that.insertMany(session, &converted);
-    error = session->session->close(session->session, NULL);
+    if (error) {
+      if (hasTransaction) {
+        session->rollbackTransaction(NULL);
+      }
+      THROW(Exception::TypeError, wiredtiger_strerror(error));
+    }
+    if (hasTransaction) {
+      error = session->commitTransaction(NULL);
+    }
+    error = session->close(NULL);
     // freeConvertedKVPairs(&converted);
     if (error) {
       THROW(Exception::TypeError, wiredtiger_strerror(error));
     }
+    printf("Completed insert\n");
   }
 
 
@@ -261,6 +378,8 @@ namespace wiredtiger::binding {
     // at some point should probably separate out the raw session implementation from these helpers
     proto->Set(NewLatin1String(isolate, "find"), NewFunctionTemplate(isolate, WiredTigerTableFind, Local<Value>(), sig));
     proto->Set(NewLatin1String(isolate, "insertMany"), NewFunctionTemplate(isolate, WiredTigerTableInsertMany, Local<Value>(), sig));
+    proto->Set(NewLatin1String(isolate, "updateMany"), NewFunctionTemplate(isolate, WiredTigerTableUpdateMany, Local<Value>(), sig));
+    proto->Set(NewLatin1String(isolate, "deleteMany"), NewFunctionTemplate(isolate, WiredTigerTableDeleteMany, Local<Value>(), sig));
     proto->Set(NewLatin1String(isolate, "createIndex"), NewFunctionTemplate(isolate, WiredTigerTableCreateIndex, Local<Value>(), sig));
     Local<Function> fn = tmpl->GetFunction(Isolate::GetCurrent()->GetCurrentContext()).ToLocalChecked();
     target->Set(context, String::NewFromOneByte(isolate, (const uint8_t*)"WiredTigerTable", NewStringType::kNormal).ToLocalChecked(), fn).FromJust();

@@ -178,6 +178,9 @@ export const schema = {
   }
 }
 
+export type UpdateModifier<ESchema extends ExternalSchema> = {
+  $set: Partial<ESchema>
+}
 
 // no idea why 4 works and 5 doesn't - but it's fine, I'd expect to only really need 1 depth
 type MagicDepth = 4;

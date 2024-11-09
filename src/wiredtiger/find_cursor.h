@@ -48,8 +48,8 @@ namespace wiredtiger {
 
     protected:
       int init();
-    public:
       int initCursor(); // public just for accessors? Puke.
+    public:
       WiredTigerSession *session;
       Format formatAt(bool forValues, int i);
       int nextBatch(int batchSize, std::vector<std::unique_ptr<EntryOfVectors>>* results);
@@ -70,7 +70,7 @@ namespace wiredtiger {
       }
 
       virtual WT_SESSION* getRawSession() {
-        return this->session->session;
+        return this->session->getWTSession();
       }
 
 

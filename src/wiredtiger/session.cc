@@ -20,6 +20,11 @@ namespace wiredtiger {
   }
 
   WiredTigerSession::~WiredTigerSession() {
+    // TODO: close session if not already
+  }
+
+  bool WiredTigerSession::isInTransaction() {
+    return _isInTransaction;
   }
 
   int WiredTigerSession::create(char* typeAndName, char* specs) {
@@ -29,19 +34,39 @@ namespace wiredtiger {
       specs
     );
   }
-  int WiredTigerSession::join(Cursor* joinCursor, Cursor* refCursor, char* config) {
-    return session->join(session, joinCursor->cursor, refCursor->cursor, config);
+
+  int WiredTigerSession::close(char* config) {
+    return session->close(session, config);
   }
+  int WiredTigerSession::join(Cursor* joinCursor, Cursor* refCursor, char* config) {
+    return session->join(session, joinCursor->getWTCursor(), refCursor->getWTCursor(), config);
+  }
+  int WiredTigerSession::openCursor(char* cursorSpec, Cursor** cursor) {
+    WT_CURSOR* wtCursor;
+    RETURN_IF_ERROR(session->open_cursor(session, cursorSpec, NULL, NULL, &wtCursor));
+    *cursor = new Cursor(wtCursor);
+    return 0;
+  }
+  int WiredTigerSession::openCursor(char* cursorSpec, char* config, Cursor** cursor) {
+    WT_CURSOR* wtCursor;
+    RETURN_IF_ERROR(session->open_cursor(session, cursorSpec, NULL, config, &wtCursor));
+    *cursor = new Cursor(wtCursor);
+    return 0;
+  }
+
   int WiredTigerSession::beginTransaction(char* config) {
+    _isInTransaction = true;
     return session->begin_transaction(session, config);
   }
   int WiredTigerSession::prepareTransaction(char* config) {
     return session->prepare_transaction(session, config);
   }
   int WiredTigerSession::commitTransaction(char* config) {
+    _isInTransaction = false;
     return session->commit_transaction(session, config);
   }
   int WiredTigerSession::rollbackTransaction(char* config) {
+    _isInTransaction = false;
     return session->rollback_transaction(session, config);
   }
 }

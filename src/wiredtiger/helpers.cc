@@ -274,9 +274,9 @@ void unpackItemForFormat(
       valueItem = (void*)item.data;
     }
     values->push_back(QueryValue {
-      format,
       valueItem,
       size,
+      format,
       false
     });
   }

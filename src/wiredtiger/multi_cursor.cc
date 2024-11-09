@@ -12,6 +12,30 @@ namespace wiredtiger {
 
   }
 
+  MultiCursor::MultiCursor(WiredTigerSession* session, char* tableName, std::vector<QueryCondition>* conditions): Cursor(NULL) {
+    int joinCursorLength = strlen(tableName) + 12;
+    int tableCursorLength = strlen(tableName) + 7;
+    char* tableCursorUri = (char*)malloc(tableCursorLength);
+    char* joinCursorUri = (char*)malloc(joinCursorLength);
+    sprintf(joinCursorUri, "join:table:%s", tableName);
+    sprintf(tableCursorUri, "table:%s", tableName);
+
+    // TODO: throw on error somehow?
+    cursorForConditions(
+      session->getWTSession(),
+      tableCursorUri,
+      joinCursorUri,
+      conditions,
+      &cursor,
+      false,
+      false,
+      &cursors,
+      &buffers
+    );
+    free(joinCursorUri);
+    free(tableCursorUri);
+  }
+
   MultiCursor::~MultiCursor() {
     for (size_t i = 0; i < this->buffers.size(); i++) {
       free(this->buffers.at(i));
@@ -30,7 +54,7 @@ namespace wiredtiger {
     }
     this->isComplete = false;
     this->isReset = true;
-    this->seenKeys.clear();
+    this->seenVectorKeys.clear();
     return 0;
   }
 
@@ -47,6 +71,47 @@ namespace wiredtiger {
     return 0;
   }
 
+  int MultiCursor::next(std::vector<QueryValueOrWT_ITEM>** keyArray) {
+    int error;
+    if (isComplete) {
+      return WT_NOTFOUND;
+    }
+    while ((error = Cursor::next()) == 0) {
+      *keyArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(false));
+      RETURN_IF_ERROR(this->getKey(*keyArray));
+      int count = seenVectorKeys.count({ *keyArray });
+      if (count != 0) {
+        delete *keyArray;
+        continue;
+      }
+      seenVectorKeys.insert({ *keyArray });
+      break;
+    }
+
+    if (error != 0) {
+      if (error == WT_NOTFOUND) {
+        isComplete = true;
+      }
+      return error;
+    }
+    return 0;
+  }
+
+  int MultiCursor::count(int* counter) {
+    int error = 0;
+    if (isComplete) {
+      return WT_NOTFOUND;
+    }
+    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    while((error = this->next(&keyArray)) == 0) {
+      *counter += 1;
+    }
+    for (auto iterator = seenVectorKeys.begin(); iterator != seenVectorKeys.end(); iterator++) {
+      delete iterator->items;
+    }
+    return error;
+  }
+
 
   int MultiCursor::next(std::vector<QueryValueOrWT_ITEM>** keyArray, std::vector<QueryValueOrWT_ITEM>** valueArray) {
     int error;
@@ -58,6 +123,7 @@ namespace wiredtiger {
       RETURN_IF_ERROR(this->getKey(*keyArray));
       int count = seenVectorKeys.count({ *keyArray });
       if (count != 0) {
+        delete *keyArray;
         continue;
       }
       seenVectorKeys.insert({ *keyArray });

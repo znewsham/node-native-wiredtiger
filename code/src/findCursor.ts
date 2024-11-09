@@ -65,11 +65,18 @@ export class FindCursor<TSchema extends object> {
       }
     }
     while (this.#batch.length);
+    this.reset();
   }
 
   toArray(): TSchema[] {
     const arr: TSchema[] = [];
     this.forEach((doc) => arr.push(doc));
+    return arr;
+  }
+
+  map<DSchema = any>(callback: (doc: TSchema, index: number) => DSchema): DSchema[] {
+    const arr: DSchema[] = [];
+    this.forEach((doc, i) => arr.push(callback(doc, i)));
     return arr;
   }
 }

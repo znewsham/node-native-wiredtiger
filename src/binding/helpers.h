@@ -10,8 +10,31 @@ using namespace node;
 #define NODE_HELPERS_H
 
 #define THROW(x, m) return wiredtiger::binding::Return(wiredtiger::binding::ThrowException(Isolate::GetCurrent(), x(wiredtiger::binding::NewLatin1String(Isolate::GetCurrent(), m))), args)
+#define THROW_RETURN(x, m, i) wiredtiger::binding::Return(wiredtiger::binding::ThrowException(Isolate::GetCurrent(), x(wiredtiger::binding::NewLatin1String(Isolate::GetCurrent(), m))), args); return i
 
 namespace wiredtiger::binding {
+  template<class T>
+  struct PersistentClassPair {
+    Global<Object> persistent;
+    T* actual;
+  };
+
+  template <class T>
+  void WeakCleanupCallback(const v8::WeakCallbackInfo<PersistentClassPair<T>>& data){
+    PersistentClassPair<T>* pair = data.GetParameter();
+    pair->persistent.Reset(Isolate::GetCurrent(), v8::Local<v8::Object>{});
+    delete pair->actual;
+    delete pair;
+  }
+
+  template <class T>
+  void BindClassToV8(Isolate* isolate, Local<Object> handle, T* actual) {
+    PersistentClassPair<T>* pair = new PersistentClassPair<T>();
+    pair->actual = actual;
+    pair->persistent.Reset(isolate, handle);
+    pair->persistent.SetWeak(pair, WeakCleanupCallback<T>, v8::WeakCallbackType::kParameter);
+  }
+
   template<class T>
   // TODO why ref and not pointer?
   T& Unwrap(Local<Object> handle) {

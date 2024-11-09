@@ -1,4 +1,4 @@
-import { ExternalSchema, ColumnSpec, ExternalSchemaInternalSchema, InternalSchema, RawCollectionConfiguration, RemainingSymbol, SchemaConfiguration, SupportedTypes, ProjectedTSchemaOf } from "./collectionSchema.js";
+import { ExternalSchema, ColumnSpec, ExternalSchemaInternalSchema, InternalSchema, RawCollectionConfiguration, RemainingSymbol, SchemaConfiguration, SupportedTypes, ProjectedTSchemaOf, UpdateModifier } from "./collectionSchema.js";
 import { WiredTigerDB } from "./db.js";
 import { WiredTigerTable, WiredTigerSession } from "./getModule.js";
 import { configToString } from "./helpers.js";
@@ -154,6 +154,26 @@ export class Collection
     this.#ensureTable();
     return this.find<FindOptions<keyof ESchema & string>, ESchema>([]).nextBatch(1)[0];
   }
+
+  deleteMany(conditions?: QueryCondition<any[]>[]): number {
+    this.#ensureTable();
+    return this._table.deleteMany(conditions);
+  }
+
+  updateMany(conditions: QueryCondition<any[]>[], modifier: UpdateModifier<Omit<ESchema, typeof Collection.ID_NAME>>): number {
+    this.#ensureTable();
+    // TODO: remaining
+    const newValues = this.#valueDefinitions.map(({ name }) => {
+      if (modifier.$set.hasOwnProperty(name as keyof ESchema)) {
+        // @ts-expect-error
+        return modifier.$set[name];
+      }
+      return undefined;
+    });
+
+    return this._table.updateMany(conditions, newValues);
+  }
+
   find<
     ESchemaFindOptions extends FindOptions<keyof ESchema & string> = FindOptions<keyof ESchema & string>,
     TSchema extends object = ProjectedTSchemaOf<ESchema, FlatArray<ESchemaFindOptions["columns"], 0> | "_id">,
