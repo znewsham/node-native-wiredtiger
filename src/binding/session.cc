@@ -77,6 +77,9 @@ namespace wiredtiger::binding {
     v8::Global<v8::Object>* persistent = existingSessions.at(session);
     existingSessions.erase(session);
     persistent->Reset(Isolate::GetCurrent(), v8::Local<v8::Object>{});
+    printf("Resetting: %p | ", session);
+    printf("%p | ", session->getWTSession());
+    printf("%p\n", session->getWTSession()->app_private);
     delete session;
     delete persistent;
   }
@@ -86,6 +89,7 @@ namespace wiredtiger::binding {
     obj->SetAlignedPointerInInternalField(0, session);
     v8::Global<v8::Object>* persistent = new v8::Global<v8::Object>();
     persistent->Reset(isolate, obj);
+    printf("Registering: %p\n", session);
     persistent->SetWeak(session, WiredTigerSessionCleanup, v8::WeakCallbackType::kParameter);
     existingSessions.insert(pair<WiredTigerSession*, v8::Global<v8::Object>*>{ session, persistent });
   }

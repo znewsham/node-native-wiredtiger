@@ -38,7 +38,9 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     const unsigned argc = 3;
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session),
+      // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+      // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session),
       Nan::CopyBuffer((char*)v1->data, v1->size).ToLocalChecked(),
       Nan::CopyBuffer((char*)v2->data, v2->size).ToLocalChecked(),
     };
@@ -60,7 +62,9 @@ namespace wiredtiger::binding {
     const unsigned argc = 3;
 
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session),
+      // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+      // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session),
       NewLatin1String(v8::Isolate::GetCurrent(), uri),
       GetConfigItemValue(appcfg)
     };
@@ -83,7 +87,9 @@ namespace wiredtiger::binding {
     const unsigned argc = 1;
 
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session)
+      // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+      // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session)
     };
 
     Nan::Call(terminateCb, self.Get(isolate), argc, argv);

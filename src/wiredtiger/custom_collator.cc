@@ -40,6 +40,7 @@ namespace wiredtiger {
     int *cmp
   ) {
     // TODO: will only work if the string column is first.
+    // TODO: enforces a unique column right now as we exclude the _id.
     const char *s1 = (const char *)v1->data;
     const char *s2 = (const char *)v2->data;
     *cmp = strcasecmp(s1, s2);

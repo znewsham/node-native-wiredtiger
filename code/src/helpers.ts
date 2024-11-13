@@ -1,7 +1,8 @@
 
 export function configToString(config: object | string[]): string {
   if (Array.isArray(config)) {
-    return config.join(",");
+    // NOTE: array of arrays not supported
+    return config.map(sC => typeof sC === "object" ? `${configToString(sC)}` : sC).join(",");
   }
   return Object.entries(config).filter(([key, value]) => value !== undefined).map(([key, value]) => {
     if (typeof value === "boolean") {

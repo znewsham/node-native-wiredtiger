@@ -42,12 +42,17 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     const unsigned argc = 4;
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session),
+      // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+      // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session),
       Nan::CopyBuffer((char*)key->data, key->size).ToLocalChecked(),
       Nan::CopyBuffer((char*)value->data, value->size).ToLocalChecked(),
       CursorGetNew(result_cursor),
     };
-    Nan::Call(extractCb, self.Get(isolate), argc, argv);
+    bool success = !Nan::Call(extractCb, self.Get(isolate), argc, argv).IsEmpty();
+    if (!success) {
+      return -1;
+    }
     return 0;
   }
 
@@ -60,7 +65,9 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     const unsigned argc = 3;
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session),
+      // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+      // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session),
       NewLatin1String(v8::Isolate::GetCurrent(), uri),
       GetConfigItemValue(appcfg)
     };
@@ -83,7 +90,9 @@ namespace wiredtiger::binding {
     const unsigned argc = 1;
 
     Local<Value> argv[argc] = {
-      WiredTigerSessionGetOrCreate(session)
+    // NOTE: We don't want to pass a session out if the session wasn't created by us (e.g., has no associated wrapping session)
+    // it should have no meaning to the JS code - it should also only happen during termination and maybe configuration - but we'll see
+      session->app_private == NULL ? (Local<Value>)Null(isolate) : (Local<Value>)WiredTigerSessionGetOrCreate(session)
     };
 
     Nan::Call(terminateCb, self.Get(isolate), argc, argv);

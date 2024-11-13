@@ -39,8 +39,12 @@ namespace wiredtiger {
 
       }
 
+      void setExternal() {
+        isExternal = true;
+      }
+
       virtual ~Cursor() {
-        if (!isClosed) {
+        if (!isClosed && isExternal) {
           this->close();
         }
       }
@@ -61,11 +65,10 @@ namespace wiredtiger {
       int bound(char* config);
       int compare(Cursor* other, int* comp);
       int equals(Cursor* other, int* equals);
-      void setKey(std::vector<QueryValueOrWT_ITEM>* valueArray);
-      void setValue(std::vector<QueryValueOrWT_ITEM>* valueArray);
-      int getValue(std::vector<QueryValueOrWT_ITEM>* valueArray);
-      int getKey(std::vector<QueryValueOrWT_ITEM>* valueArray);
-      QueryValueOrWT_ITEM* initArray(bool forValues, size_t* size);
+      void setKey(std::vector<QueryValue>* valueArray);
+      void setValue(std::vector<QueryValue>* valueArray);
+      int getValue(std::vector<QueryValue>* valueArray);
+      int getKey(std::vector<QueryValue>* valueArray);
       virtual Format formatAt(bool forValues, int i);
       size_t columnCount(bool forValues);
 
@@ -81,32 +84,41 @@ namespace wiredtiger {
         return this->cursor->value_format;
       }
 
+      uint64_t getFlags() {
+        return this->cursor->flags;
+      }
+
+      void setFlags(uint64_t flags) {
+        this->cursor->flags = flags;
+      }
+
       virtual WT_SESSION* getRawSession() {
         return this->cursor->session;
       }
 
     private:
-      void populateInner(std::vector<QueryValueOrWT_ITEM>* valueArray, av_alist* argList, bool forValues, bool forWrite);
+      bool isExternal = false; // proxy for whether we own the cursor or not (e.g., should be false for custom extractor cursor instances)
+      void populateInner(std::vector<QueryValue>* valueArray, std::vector<WT_ITEM>* wtItems, av_alist* argList, bool forValues, bool forWrite);
 
       int populate(
         int (*funcptr)(WT_CURSOR* cursor, ...),
-        std::vector<QueryValueOrWT_ITEM>* valueArray,
+        std::vector<QueryValue>* valueArray,
         bool forValues
       );
       void populate(
         void (*funcptr)(WT_CURSOR* cursor, ...),
-        std::vector<QueryValueOrWT_ITEM>* valueArray,
+        std::vector<QueryValue>* valueArray,
         bool forValues
       );
 
       int populateRaw(
         int (*funcptr)(WT_CURSOR* cursor, ...),
-        std::vector<QueryValueOrWT_ITEM>* valueArray
+        std::vector<QueryValue>* valueArray
       );
 
       void populateRaw(
         void (*funcptr)(WT_CURSOR* cursor, ...),
-        std::vector<QueryValueOrWT_ITEM>* valueArray
+        std::vector<QueryValue>* valueArray
       );
   };
 }

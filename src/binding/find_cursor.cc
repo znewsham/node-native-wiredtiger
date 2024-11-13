@@ -126,6 +126,7 @@ namespace wiredtiger::binding {
     Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
 
     FindCursor* sc = new FindCursor(tableName, conditions, options); // deleted on close
+    sc->setExternal();
     obj->SetAlignedPointerInInternalField(0, sc);
     return obj;
   }

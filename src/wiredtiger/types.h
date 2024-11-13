@@ -45,6 +45,9 @@ namespace wiredtiger {
   inline bool FieldIsPtr(char field) {
     return field == FIELD_WT_ITEM || field == FIELD_WT_UITEM || field == FIELD_WT_ITEM_DOUBLE || field == FIELD_WT_ITEM_BIGINT || field == FIELD_CHAR_ARRAY || field == FIELD_STRING;
   }
+  inline bool FieldIsWTItem(char field) {
+    return field == FIELD_WT_ITEM || field == FIELD_WT_UITEM || field == FIELD_WT_ITEM_DOUBLE || field == FIELD_WT_ITEM_BIGINT;
+  }
   template <class T> struct ErrorAndResult {
     int error;
     T value;
@@ -72,17 +75,6 @@ namespace wiredtiger {
     bool noFree/* = false*/;
   } QueryValue;
 
-  typedef union QueryValueOrWT_ITEM {
-    ~QueryValueOrWT_ITEM() {
-      if (FieldIsPtr(queryValue.dataType)) {
-        if (!queryValue.noFree && queryValue.value.valuePtr != NULL) {
-          free(queryValue.value.valuePtr);
-        }
-      }
-    }
-    QueryValue queryValue;
-  } QueryValueOrWT_ITEM;
-
   typedef struct QueryCondition {
     ~QueryCondition() {
       if (subConditions != NULL) {
@@ -98,7 +90,7 @@ namespace wiredtiger {
     char* index;
     uint8_t operation;
     std::vector<QueryCondition>* subConditions = NULL;
-    std::vector<QueryValueOrWT_ITEM>* values = NULL;
+    std::vector<QueryValue>* values = NULL;
   } QueryCondition;
 
   typedef struct EntryOfVectors {
@@ -110,8 +102,8 @@ namespace wiredtiger {
         delete valueArray;
       }
     }
-    std::vector<QueryValueOrWT_ITEM>* keyArray;
-    std::vector<QueryValueOrWT_ITEM>* valueArray;
+    std::vector<QueryValue>* keyArray;
+    std::vector<QueryValue>* valueArray;
   } EntryOfVectors;
   typedef struct Format {
     char format;

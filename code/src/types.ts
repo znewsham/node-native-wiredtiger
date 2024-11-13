@@ -1,3 +1,5 @@
+import { AnySchemaEntry, SupportedTypes } from "./collectionSchema.js";
+
 export enum Operation {
   EQ,
   NE,
@@ -30,6 +32,24 @@ type ConditionQueryCondition<Values extends any[]> = {
   conditions: QueryCondition<Values>[];
 }
 export type QueryCondition<Values extends any[]> = ConditionQueryCondition<Values> | ValueQueryCondition<Values> | IndexOnlyQueryCondition;
+
+type BasicRecord = {
+  [k in string]: string | number | string[] | number[] | BasicRecord | BasicRecord[]
+};
+
+export type StringKeysOfT<T extends Record<string, AnySchemaEntry>> = {[k in keyof T]: k extends string ? T[k]["actualType"] extends SupportedTypes.string ? k : never : never}[keyof T];
+
+
+export type IndexColumnOptions<ISchema extends Record<string, any>> = ((keyof ISchema) & string)
+  | { extractor: "ngrams", ngrams: number, columns: StringKeysOfT<ISchema>[], direction?: 1 | -1 }
+  | { extractor: "words", columns: StringKeysOfT<ISchema>[], direction?: 1 | -1 }
+  | { columns: ((keyof ISchema) & string)[], direction?: 1 | -1 }
+
+export type IndexCreationOptions = {
+  extractor?: string,
+  collator?: string,
+  immutable?: boolean,
+}
 
 type CreateTypes = 'table' | 'colgroup' | 'index';
 

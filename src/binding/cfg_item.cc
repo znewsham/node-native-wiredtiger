@@ -9,6 +9,7 @@ using namespace v8;
 namespace wiredtiger::binding {
   Local<Value> GetConfigItemValue(WT_CONFIG_ITEM* appcfg) {
     Isolate* isolate = Isolate::GetCurrent();
+    printf("Custom: %d %d\n", appcfg->type, WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_STRUCT);
     if (appcfg->type == WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_STRING) {
       return NewLatin1String(isolate, appcfg->str, appcfg->len);
     }
@@ -17,6 +18,9 @@ namespace wiredtiger::binding {
     }
     if (appcfg->type == WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_NUM) {
       return Number::New(isolate, appcfg->val);
+    }
+    if (appcfg->type == WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_STRUCT) {
+      return NewLatin1String(isolate, appcfg->str, appcfg->len);
     }
     return Null(isolate);
   }

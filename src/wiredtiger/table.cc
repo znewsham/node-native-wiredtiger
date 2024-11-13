@@ -95,7 +95,7 @@ namespace wiredtiger {
 
   int WiredTigerTable::createIndex(WiredTigerSession* session, char* indexName, char* config) {
     this->initTable(session);
-    char* uri = (char*)calloc(sizeof(char), strlen(tableName) + strlen(indexName) + 7);
+    char* uri = (char*)calloc(sizeof(char), strlen(tableName) + strlen(indexName) + 8);
     sprintf(uri, "index:%s:%s", tableName, indexName);
     RETURN_AND_FREE_IF_ERROR(session->create(uri, config), uri);
     free(uri);
@@ -113,10 +113,10 @@ namespace wiredtiger {
     session->openCursor(specName, &deleteCursor);
     MultiCursor findCursor(session, tableName, conditions);
     int error;
-    std::vector<unique_ptr<std::vector<QueryValueOrWT_ITEM>>> keys;
-    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    std::vector<unique_ptr<std::vector<QueryValue>>> keys;
+    std::vector<QueryValue>* keyArray = NULL;
     while ((error = findCursor.next(&keyArray)) == 0) {
-      keys.push_back(unique_ptr<std::vector<QueryValueOrWT_ITEM>>(keyArray));
+      keys.push_back(unique_ptr<std::vector<QueryValue>>(keyArray));
       deleteCursor->setKey(keyArray);
       int error = deleteCursor->remove();
       if (error == 0) {
@@ -150,7 +150,7 @@ namespace wiredtiger {
   int WiredTigerTable::updateMany(
     WiredTigerSession* session,
     std::vector<QueryCondition>* conditions,
-    std::vector<QueryValueOrWT_ITEM>* newValues,
+    std::vector<QueryValue>* newValues,
     int* updatedCount
   ) {
     this->initTable(session);
@@ -158,19 +158,23 @@ namespace wiredtiger {
     Cursor* updateCursor;
     RETURN_IF_ERROR(session->openCursor(specName, (char*)"overwrite=false", &updateCursor));
     MultiCursor findCursor(session, tableName, conditions);
+    if (findCursor.error != 0) {
+      return findCursor.error;
+    }
     int error;
     // we can't delete keys until we're done, because we use them to dedupe overlapping index bounds
-    std::vector<unique_ptr<std::vector<QueryValueOrWT_ITEM>>> keys;
-    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
-    std::vector<QueryValueOrWT_ITEM>* valueArray = NULL;
+    std::vector<unique_ptr<std::vector<QueryValue>>> keys;
+    std::vector<QueryValue>* keyArray = NULL;
+    std::vector<QueryValue>* valueArray = NULL;
+    int i = 0;
     while ((error = findCursor.next(&keyArray, &valueArray)) == 0) {
-      keys.push_back(unique_ptr<std::vector<QueryValueOrWT_ITEM>>(keyArray));
+      keys.push_back(unique_ptr<std::vector<QueryValue>>(keyArray));
       updateCursor->setKey(keyArray);
       for (size_t i = 0; i < valueArray->size(); i++) {
-        if ((*newValues)[i].queryValue.dataType != FIELD_PADDING) {
-          (*valueArray)[i].queryValue.value.valuePtr = (*newValues)[i].queryValue.value.valuePtr;
-          (*valueArray)[i].queryValue.value.valueUint = (*newValues)[i].queryValue.value.valueUint;
-          (*valueArray)[i].queryValue.size = (*newValues)[i].queryValue.size;
+        if ((*newValues)[i].dataType != FIELD_PADDING) {
+          (*valueArray)[i].value.valuePtr = (*newValues)[i].value.valuePtr;
+          (*valueArray)[i].value.valueUint = (*newValues)[i].value.valueUint;
+          (*valueArray)[i].size = (*newValues)[i].size;
         }
       }
       updateCursor->setValue(valueArray);

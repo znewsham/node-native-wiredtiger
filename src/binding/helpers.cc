@@ -19,6 +19,47 @@ using namespace wiredtiger;
 
 namespace wiredtiger::binding {
 
+
+
+  void ThrowExtractError(int result, const FunctionCallbackInfo<Value>& args) {
+    if (result == CONDITION_NOT_OBJECT) {
+      THROW(Exception::TypeError, "Invalid Condition (not an object)");
+    }
+    else if (result == INDEX_NOT_STRING) {
+      THROW(Exception::TypeError, "Invalid Condition (index not a string)");
+    }
+    else if (result == OPERATION_NOT_INTEGER) {
+      THROW(Exception::TypeError, "Invalid Condition (operation not an integer)");
+    }
+    else if (result == VALUES_NOT_ARRAY) {
+      THROW(Exception::TypeError, "Invalid Condition (values not an array)");
+    }
+    else if (result == CONDITIONS_NOT_ARRAY) {
+      THROW(Exception::TypeError, "Invalid Condition (conditions not an array)");
+    }
+    else if (result == INVALID_VALUE_TYPE) {
+      THROW(Exception::TypeError, "Invalid Condition (invalid value type)");
+    }
+    else if (result == VALUES_AND_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (can't specify sub conditions and values)");
+    }
+    else if (result == INVALID_OPERATOR) {
+      THROW(Exception::TypeError, "Invalid Condition (AND/OR mismatch with values/conditions)");
+    }
+    else if (result == NO_VALUES_OR_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (missing values or conditions)");
+    }
+    else if (result == EMPTY_CONDITIONS) {
+      THROW(Exception::TypeError, "Invalid Condition (empty conditions)");
+    }
+    else if (result == EMPTY_VALUES) {
+      THROW(Exception::TypeError, "Invalid Condition (empty values)");
+    }
+    else {
+      THROW(Exception::TypeError, "Unknown error");
+    }
+  }
+
   Local<String> NewLatin1String(Isolate* isolate, const char* string, int length) {
     return String::NewFromOneByte(isolate, (const uint8_t*)string, NewStringType::kNormal, length).ToLocalChecked();
   }
@@ -157,7 +198,7 @@ int populateArrayItem(
       BigInt::New(isolate, (int64_t)value.valueUint)
     ).Check();
   }
-  else if (format == FIELD_WT_ITEM) {
+  else if (format == FIELD_WT_ITEM || format == FIELD_WT_UITEM) {
     items->Set(
       isolate->GetCurrentContext(),
       v,
@@ -166,21 +207,26 @@ int populateArrayItem(
   }
   else if (format == FIELD_WT_ITEM_DOUBLE) {
     double doubleValue;
-    wiredtiger::byteArrayToDouble((uint8_t*)value.valuePtr, &doubleValue);
+    uint8_t* writableBytes = (uint8_t*)calloc(sizeof(uint8_t), size);
+    memcpy(writableBytes, value.valuePtr, size);
+    wiredtiger::byteArrayToDouble(writableBytes, &doubleValue);
     items->Set(
       isolate->GetCurrentContext(),
       v,
       Number::New(isolate, doubleValue)
     ).Check();
+    free(writableBytes);
   }
   else if (format == FIELD_WT_ITEM_BIGINT) {
-    uint8_t* bytes = (uint8_t*)value.valuePtr;
-    wiredtiger::unmakeBigIntByteArraySortable(size, bytes);
+    uint8_t* writableBytes = (uint8_t*)calloc(sizeof(uint8_t), size);
+    memcpy(writableBytes, value.valuePtr, size);
+    wiredtiger::unmakeBigIntByteArraySortable(size, writableBytes);
     items->Set(
       isolate->GetCurrentContext(),
       v,
-      BigInt::NewFromWords(isolate->GetCurrentContext(), *bytes, (size - 1) / 8, (uint64_t*)(bytes + 1)).ToLocalChecked()
+      BigInt::NewFromWords(isolate->GetCurrentContext(), *writableBytes, (size - 1) / 8, (uint64_t*)(writableBytes + 1)).ToLocalChecked()
     ).Check();
+    free(writableBytes);
   }
   else if (format == FIELD_BITFIELD) {
     items->Set(
@@ -206,12 +252,12 @@ int populateArrayItem(
 int populateArray(
   Isolate* isolate,
   Local<Array> items,
-  QueryValueOrWT_ITEM* values,
+  QueryValue* values,
   size_t size
 ) {
   for (size_t v = 0; v < size; v++) {
-    QueryValueOrWT_ITEM qv = values[v];
-    RETURN_IF_ERROR(populateArrayItem(isolate, items, v, qv.queryValue.value, qv.queryValue.dataType, qv.queryValue.size));
+    QueryValue qv = values[v];
+    RETURN_IF_ERROR(populateArrayItem(isolate, items, v, qv.value, qv.dataType, qv.size));
   }
   return 0;
 }
@@ -219,11 +265,11 @@ int populateArray(
 int populateArray(
   Isolate* isolate,
   Local<Array> items,
-  std::vector<QueryValueOrWT_ITEM>* values
+  std::vector<QueryValue>* values
 ) {
   for (size_t v = 0; v < values->size(); v++) {
-    QueryValueOrWT_ITEM& qv = (*values)[v];
-    RETURN_IF_ERROR(populateArrayItem(isolate, items, v, qv.queryValue.value, qv.queryValue.dataType, qv.queryValue.size));
+    QueryValue& qv = (*values)[v];
+    RETURN_IF_ERROR(populateArrayItem(isolate, items, v, qv.value, qv.dataType, qv.size));
   }
   return 0;
 }
@@ -261,11 +307,6 @@ int extractValue(
   QueryValue* converted,
   Format format
 ) {
-  // TODO: we're doing this backwards - we convert based on the format+data type
-  // e.g., if you tell me it's "i" you can only give me an Int32. If you tell me it's "I" - you can give me an Int32 or a UInt32
-  // most interesting are "u" and "l/L"
-  // - l/L could take (U)Int32, or could take a bigint
-  // - u could take a Buffer or a number. If it's a number we treat it as a float64
   QueryValueValue value;
   value.valuePtr = NULL;
   converted->dataType = format.format;
@@ -350,6 +391,7 @@ int extractValue(
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
       return INVALID_VALUE_TYPE;
+    case FIELD_WT_UITEM:
     case FIELD_WT_ITEM:
       if (val->IsBigInt()) {
         int sign_bit;
@@ -359,9 +401,9 @@ int extractValue(
         bytes = (uint8_t*)calloc(sizeof(uint64_t), word_count + 1);
         (Local<BigInt>::Cast(val))->ToWordsArray(&sign_bit, &word_count, (uint64_t*)(bytes + 1));
         *bytes = sign_bit;
-        // TODO: sign flip?
         value.valuePtr = (uint8_t*)bytes;
         size = (word_count * 8) + 1;
+        // doing the flip here is totally acceptable - since this is write, we own the bytes.
         wiredtiger::makeBigIntByteArraySortable(size, bytes);
         SET_VALUE_SIZE_FORMAT_AND_RETURN();
       }
@@ -430,12 +472,12 @@ int extractValues(
   Local<Array> values,
   Isolate* isolate,
   Local<Context> context,
-  std::vector<QueryValueOrWT_ITEM> *convertedValues,
+  std::vector<QueryValue> *convertedValues,
   std::vector<Format>* formats
 ) {
   for (uint32_t a = 0; a < values->Length(); a++) {
     Local<Value> val = values->Get(context, a).ToLocalChecked();
-    RETURN_IF_ERROR(extractValue(val, isolate, &(*convertedValues)[a].queryValue, formats->at(a)));
+    RETURN_IF_ERROR(extractValue(val, isolate, &(*convertedValues)[a], formats->at(a)));
   }
   return 0;
 }
@@ -482,7 +524,7 @@ int parseConditions(
       operation = operationInteger->Value();
     }
 
-    std::vector<QueryValueOrWT_ITEM>* conditionValues = NULL;
+    std::vector<QueryValue>* conditionValues = NULL;
     std::vector<QueryCondition>* subConditions = NULL;
     bool hasConditions = false;
     bool hasValues = false;
@@ -523,7 +565,7 @@ int parseConditions(
         return VALUES_NOT_ARRAY;
       }
       Local<Array> values = Local<Array>::Cast(valuesVal);
-      conditionValues = new std::vector<QueryValueOrWT_ITEM>(values->Length()); // deleted with the root conditions vector
+      conditionValues = new std::vector<QueryValue>(values->Length()); // deleted with the root conditions vector
       if (values->Length() == 0) {
         return EMPTY_VALUES;
       }

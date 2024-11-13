@@ -2,30 +2,41 @@ import { makeid } from "../tests/raw/utils.js";
 import { Collection } from "./collection.js";
 import { RemainingSymbol, schema } from "./collectionSchema.js";
 import { WiredTigerDB } from "./db.js";
-import { CustomCollator } from "./getModule.js";
-import { CustomExtractor } from "./getModule.js";
-import { CreateTypeAndName, Operation, WiredTigerCursor, WiredTigerSession } from "./types.js";
+import { CustomCollator, CustomExtractor, wiredTigerStructUnpack } from "./getModule.js";
+import { configToString } from "./helpers.js";
+import { CreateTypeAndName, Operation, StringKeysOfT, WiredTigerCursor, WiredTigerSession } from "./types.js";
 
 
 let db = new WiredTigerDB("WT-HOME", { in_memory: true, create: true, statistics: ["all"] });
 db.open();
-let current = "A";
-// db.native.addExtractor(
-//   "TEST",
-//   new CustomExtractor(
-//     () => {},
-//     () => {
-//       return new CustomExtractor(
-//         (session: WiredTigerSession, key: Buffer, value: Buffer, cursor: WiredTigerCursor) => {
-//           cursor.setKey("test", current);
-//           current = String.fromCharCode(current.charCodeAt(0) + 1);
-//           cursor.insert();
-//         })
-//       },
-//     () => {console.log("HERE2");}
-//   ),
-//   ""
-// );
+db.native.addExtractor(
+  "TEST",
+  new CustomExtractor(
+    () => {
+      console.log("HERE1");
+    },
+    (session: WiredTigerSession, uri: string, appcfg: string) => {
+      console.log(uri, appcfg);
+      return new CustomExtractor(
+        (session: WiredTigerSession, key: Buffer, value: Buffer, cursor: WiredTigerCursor) => {
+          try {
+            const docValues = wiredTigerStructUnpack(session, value, "Siu");
+            cursor.setKey(docValues[2]);
+            cursor.insert();
+          }
+          catch (e: any) {
+            if (e.message.endsWith("item not found")) {
+              return;
+            }
+            console.log(e);
+            throw e;
+          }
+        })
+      },
+    () => {console.log("HERE2");}
+  ),
+  ""
+);
 
 // db.native.addCollator(
 //   "TEST",
@@ -53,10 +64,11 @@ let col = new Collection(db, "Hello", {
   schema: {
     _id: schema.String(),
     stringThing: schema.String(),
+    stringThing2: schema.String(),
     intThing: schema.Int(),
+    bigThing: schema.BigInt(),
     doubleThing: schema.Double(),
     longThing: schema.Long(),
-    bigThing: schema.BigInt(),
     // binaryThing: schema.Binary(),
     booleanThing: schema.Boolean(),
     bitFieldThing: schema.BitField(4),
@@ -72,25 +84,31 @@ let col = new Collection(db, "Hello", {
   }
 });
 
-
 col.createIndex("inorder", ["stringThing"]);
-col.createIndex("reverse", ["stringThing"], ",collator=reverse");
-col.createIndex("nocase", ["stringThing"], ",collator=nocase");
+col.createIndex("reverse", ["stringThing"]);
+// col.createIndex("nocase", ["stringThing"], ",collator=nocase");
 // col.createIndex("test", [], ",key_format=SS,extractor=TEST,collator=TEST");
-col.createIndex("words", ["stringThing"], ",key_format=S,extractor=words");
-col.createIndex("ngrams3", ["stringThing"], ",key_format=S,extractor=ngrams,app_metadata={ngrams=3}");
-col.createIndex("ngrams5", ["stringThing"], ",key_format=S,extractor=ngrams,app_metadata={ngrams=5}");
+col.createIndex("words", [{ extractor: "words", columns: ["stringThing"]}]);
+col.createIndex("ngrams3", [{ extractor: "ngrams", ngrams: 3, columns: ["stringThing"] }]);
+col.createIndex("ngrams5", [{ extractor: "ngrams", ngrams: 5, columns: ["stringThing"] }]);
+col.createIndex("testNgrams", [{ columns: ["stringThing", "stringThing2" ], extractor: "ngrams", ngrams: 3 }]);
 col.createIndex("double", ["doubleThing"]);
-// col.createIndex("bigThing", ["bigThing"]); // TODO: this causes a WT_DUPLICATE_KEY error, but only when it's included in the find projection
+col.createIndex("bigThing", ["bigThing"]);
+col.createIndex("testCompound", [
+  { columns: ["stringThing"], extractor: "words", direction: 1 },
+  { columns: ["stringThing"], extractor: "words", direction: -1 }
+])
 // col.createIndex("bsonBigThing", ["bsonBigThing"]); // TODO: this causes an invalidPointer error
+console.log("finished index creation");
 col.insertMany([
   {
     _id: "aaa",
     stringThing: "test1 z",
+    stringThing2: "test1 z",
     intThing: 10,
     doubleThing: Math.random(),
     longThing: 0x7fffffffffffffffn,
-    bigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
+    bigThing: 100n,//BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     bsonBigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     booleanThing: true,
     bitFieldThing: 0b11,
@@ -99,11 +117,12 @@ col.insertMany([
   },
   {
     _id: "AAA",
-    stringThing: new Array(10).fill(0).map(() => makeid(10)).join(" "),
+    stringThing: "test", //new Array(10).fill(0).map(() => makeid(10)).join(" "),
+    stringThing2: "test", //new Array(10).fill(0).map(() => makeid(10)).join(" "),
     intThing: 2,
     doubleThing: Math.random(),
     longThing: 0x7fffffffffffffffn,
-    bigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
+    bigThing: -1n, //BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     bsonBigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     booleanThing: true,
     bitFieldThing: 0b10,
@@ -113,10 +132,11 @@ col.insertMany([
   {
     _id: "BBB",
     stringThing: " test5",
+    stringThing2: " test5",
     intThing: 2,
     doubleThing: -Math.random(),
     longThing: 0x7fffffffffffffffn,
-    bigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
+    bigThing: 3n, //BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     bsonBigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     booleanThing: true,
     bitFieldThing: 0b01,
@@ -125,11 +145,12 @@ col.insertMany([
   },
   {
     _id: "CCC",
-    stringThing: new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+    stringThing: "test", //new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+    stringThing2: new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
     intThing: 2,
-    doubleThing: Math.random(),
+    doubleThing: -Math.random(),
     longThing: 0x7fffffffffffffffn,
-    bigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
+    bigThing: 4n, //BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     bsonBigThing: BigInt(-50000 + Math.floor(Math.random() * 100000))** BigInt(10),
     booleanThing: false,
     bitFieldThing: 0b00,
@@ -137,14 +158,16 @@ col.insertMany([
     a: "456"
   }
 ]);
+console.log("finished multi insert");
 
 col.insertOne({
   _id: "DDD",
-  stringThing: new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+  stringThing: "test4", //new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+  stringThing2: "tester",
   intThing: 2,
-  doubleThing: Math.random(),
+  doubleThing: -Math.random(),
   longThing: -8000000000000000n,
-  bigThing: BigInt(-50000 + Math.floor(Math.random() * 100000)) ** BigInt(10),
+  bigThing: 5n, //BigInt(-50000 + Math.floor(Math.random() * 100000)) ** BigInt(10),
   bsonBigThing: BigInt(-50000 + Math.floor(Math.random() * 100000)) ** BigInt(10),
   booleanThing: true,
   bitFieldThing: 0b11,
@@ -154,18 +177,28 @@ col.insertOne({
 
 col.insertOne({
   _id: "EEE",
-  stringThing: new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+  stringThing: "test2", // new Array(10).fill(0).map(() => makeid(10)).join(" " ) + " test3" + " test4" + " ABC" + " test5",
+  stringThing2: "tester",
   intThing: 2,
   doubleThing: -Math.random(),
   longThing: -8000000000000000n,
-  bigThing: -12345n,
+  bigThing: 6n, //-12345n,
   bsonBigThing: -12345n,
   booleanThing: true,
   bitFieldThing: 0b11,
   bsonThing: "Hi",
   a: "10"
 });
+console.log("Finished insert");
 
+let session = col.db.openSession();
+let realCursor = session.openCursor("file:Hello_testCompound.wti", null);
+while (realCursor.next()) {
+  console.log(realCursor.getKey("SSS")/*, realCursor.getValue()*/);
+}
+realCursor.close();
+
+console.log("Finished file read");
 
 // const directCursor = col.db.openSession().openCursor('index:Hello:bigint', null);
 // while (directCursor.next()) {
@@ -217,10 +250,11 @@ let cursor = col.find([
       { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
     ]
   }
-], { columns: ["bigThing"] });
+], { columns: ["doubleThing"] });
 console.log(cursor.toArray());
 cursor.close();
 
+console.log("started multi update");
 col.updateMany([
   {
     operation: Operation.AND,
@@ -230,6 +264,7 @@ col.updateMany([
     ]
   }
 ], { $set: { intThing: 1 } });
+console.log("ended multi update");
 cursor = col.find([
   {
     operation: Operation.AND,
@@ -252,32 +287,28 @@ console.log(col.deleteMany([
   }
 ]));
 
-let next;
-function stats(type: `statistics:${CreateTypeAndName}`) {
-  const cursor = col.db.openSession().openCursor(type, null);
-  const obj: Record<string, Record<string, number | bigint>> = {};
-  while(next = cursor.next()) {
-    const [fullKey, _strValue, numValue] = cursor.getValue();
-    const [prefix, key] = fullKey.split(": ");
-    if (!obj[prefix]) {
-      obj[prefix] = {};
-    }
-    obj[prefix][key] = numValue;
-    // console.log(cursor.getKey(), );
-    // const buffer: Buffer = cursor.getValue();
-    // const sepIndex = buffer.indexOf(0);
-    // const sep2Index = buffer.indexOf(0, sepIndex + 1);
-    // obj[buffer.slice(0, sepIndex).toString()] = intFromUnsignedBuffer(buffer.slice(sep2Index + 1));
-  }
-  cursor.close();
+// let next;
+// function stats(type: `statistics:${CreateTypeAndName}`) {
+//   const cursor = col.db.openSession().openCursor(type, null);
+//   const obj: Record<string, Record<string, number | bigint>> = {};
+//   while(next = cursor.next()) {
+//     const [fullKey, _strValue, numValue] = cursor.getValue();
+//     const [prefix, key] = fullKey.split(": ");
+//     if (!obj[prefix]) {
+//       obj[prefix] = {};
+//     }
+//     obj[prefix][key] = numValue;
+//   }
+//   cursor.close();
 
-  return obj;
-}
-console.log(stats("statistics:table:Hello"));
+//   return obj;
+// }
+// console.log(stats("statistics:table:Hello"));
 
 
 col = null;
 db.close();
+// cursor = null;
 
 db = null;
 gc({execution: "sync", flavor: "last-resort", type: "major"});

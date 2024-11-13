@@ -56,7 +56,7 @@ type SchemaEntry<
   readFormat?: FakeColumnFormats
 }
 
-type AnySchemaEntry = SchemaEntry<SupportedTypes, ColumnFormatTypes, SchemaEntry>
+export type AnySchemaEntry = SchemaEntry<SupportedTypes, ColumnFormatTypes, SchemaEntry>
   | SchemaEntry<SupportedTypes, ColumnFormatTypes, SubSchema>
   | SchemaEntry<SupportedTypes, ColumnFormatTypes, undefined>;
 
@@ -254,5 +254,6 @@ export type ColumnSpec = {
   name: string,
   columnFormat: ColumnFormatTypes,
   actualType: SupportedTypes,
-  readFormat?: FakeColumnFormats
+  readFormat?: FakeColumnFormats,
+  columnIndex: number
 };

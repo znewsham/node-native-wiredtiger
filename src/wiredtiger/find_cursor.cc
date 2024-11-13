@@ -36,8 +36,8 @@ namespace wiredtiger {
     }
     int fetched = 0;
     metrics.batchesRequested++;
-    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
-    std::vector<QueryValueOrWT_ITEM>* valueArray = NULL;
+    std::vector<QueryValue>* keyArray = NULL;
+    std::vector<QueryValue>* valueArray = NULL;
     while (fetched++ < batchSize && (error = MultiCursor::next(&keyArray, &valueArray)) == 0) {
       metrics.valuesSeen++;
       metrics.returned++;

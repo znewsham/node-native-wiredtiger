@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <vector>
+#include <bitset>
 
 using namespace std;
 
@@ -81,7 +82,14 @@ int parseFormat(const char* format, int formatLength, std::vector<Format> *forma
         size = 0;
         break;
       case FIELD_PADDING:
-        // this should only happen with indexes, as far as I know you don't need to do anything
+        // we use this in two places
+        // 1. for passing values into an update (e.g., to say "don't update this")
+        // 2. for specifying which values need handling with the custom extractor
+        // for the first, we don't care about adding a value to the formats list, but for the second we do
+        // because it allows us to not parse the table format to get the column count.
+
+        formats->push_back({ c, size });
+        size = 0;
         break;
       default:
         printf("TODO: unhandled format: %c\n", c);
@@ -94,27 +102,16 @@ int parseFormat(const char* format, int formatLength, std::vector<Format> *forma
 
 void flipSign(
   uint8_t* valueBuffer,
+  size_t bytes,
   bool positive // the positive condition changes depending on whether we're going out or in. Going out the MSB will be 1
 ) {
   if (positive) {
     valueBuffer[0] = valueBuffer[0] ^ 0x80;
-    valueBuffer[1] = valueBuffer[1] ^ 0x00;
-    valueBuffer[2] = valueBuffer[2] ^ 0x00;
-    valueBuffer[3] = valueBuffer[3] ^ 0x00;
-    valueBuffer[4] = valueBuffer[4] ^ 0x00;
-    valueBuffer[5] = valueBuffer[5] ^ 0x00;
-    valueBuffer[6] = valueBuffer[6] ^ 0x00;
-    valueBuffer[7] = valueBuffer[7] ^ 0x00;
   }
   else {
-    valueBuffer[0] = valueBuffer[0] ^ 0xff;
-    valueBuffer[1] = valueBuffer[1] ^ 0xff;
-    valueBuffer[2] = valueBuffer[2] ^ 0xff;
-    valueBuffer[3] = valueBuffer[3] ^ 0xff;
-    valueBuffer[4] = valueBuffer[4] ^ 0xff;
-    valueBuffer[5] = valueBuffer[5] ^ 0xff;
-    valueBuffer[6] = valueBuffer[6] ^ 0xff;
-    valueBuffer[7] = valueBuffer[7] ^ 0xff;
+    for (size_t i = 0; i < bytes; i++) {
+      valueBuffer[i] = valueBuffer[i] ^ 0xff;
+    }
   }
 }
 
@@ -145,27 +142,12 @@ int doubleToByteArray(
     buffer[6] = valueBuffer[1];
     buffer[7] = valueBuffer[0];
   }
-  flipSign(buffer, (buffer[0] & 0x80) == 0x00);
+  bool positive = (buffer[0] & 0x80) == 0x00;
+  flipSign(buffer, 8, positive);
+
   return 0;
 }
 
-void forceBE(uint8_t* valueBuffer) {
-  uint8_t swap = valueBuffer[0];
-  valueBuffer[0] = valueBuffer[7];
-  valueBuffer[7] = swap;
-
-  swap = valueBuffer[1];
-  valueBuffer[1] = valueBuffer[6];
-  valueBuffer[6] = swap;
-
-  swap = valueBuffer[2];
-  valueBuffer[2] = valueBuffer[5];
-  valueBuffer[5] = swap;
-
-  swap = valueBuffer[3];
-  valueBuffer[3] = valueBuffer[4];
-  valueBuffer[4] = swap;
-}
 
 // USE EXCESSIVE CARE WITH THESE TWO - mongo (seems?) converts to LE, but we use BE because https://stackoverflow.com/questions/43299299/sorting-floating-point-values-using-their-byte-representation
 int byteArrayToDouble(
@@ -173,7 +155,8 @@ int byteArrayToDouble(
   double* value
 ) {
   uint8_t* buffer = (uint8_t*)value;
-  flipSign(valueBuffer, (valueBuffer[0] & 0x80) == 0x80);
+  bool positive = (valueBuffer[0] & 0x80) == 0x80;
+  flipSign(valueBuffer, 8, positive);
 
   if (isBigEndian) {
     buffer[0] = valueBuffer[0];
@@ -199,12 +182,49 @@ int byteArrayToDouble(
   return 0;
 }
 
-int makeBigIntByteArraySortable(size_t wordCount, uint8_t* buffer) {
+void forceBE(uint8_t* valueBuffer) {
+  uint8_t swap = valueBuffer[0];
+  valueBuffer[0] = valueBuffer[7];
+  valueBuffer[7] = swap;
+
+  swap = valueBuffer[1];
+  valueBuffer[1] = valueBuffer[6];
+  valueBuffer[6] = swap;
+
+  swap = valueBuffer[2];
+  valueBuffer[2] = valueBuffer[5];
+  valueBuffer[5] = swap;
+
+  swap = valueBuffer[3];
+  valueBuffer[3] = valueBuffer[4];
+  valueBuffer[4] = swap;
+}
+
+// 8 bytes
+int makeDoubleArraySortable(uint8_t* buffer) {
   if (!isBigEndian) {
-    for (size_t i = 1; i <= wordCount / 2; i++) {
+    for (size_t i = 0; i <= 4; i++) {
       uint8_t swap = buffer[i];
-      buffer[i] = buffer[wordCount - i];
-      buffer[wordCount - i] = swap;
+      buffer[i] = buffer[4 - i];
+      buffer[4 - i] = swap;
+    }
+  }
+
+  if ((buffer[0] & 0x80) == 0x00) {
+    // we're positive - we're gonna flip the sign to 1 and do nothing else
+    buffer[0] = buffer[0] | 0x80;
+    return 0;
+  }
+  // we must be negative - flip every bit
+  flipSign(buffer, 8, false);
+}
+
+int makeBigIntByteArraySortable(size_t byteCount, uint8_t* buffer) {
+  if (!isBigEndian) {
+    for (size_t i = 1; i <= byteCount / 2; i++) {
+      uint8_t swap = buffer[i];
+      buffer[i] = buffer[byteCount - i];
+      buffer[byteCount - i] = swap;
     }
   }
   if ((buffer[0] & 0x01) == 0x00) {
@@ -213,27 +233,24 @@ int makeBigIntByteArraySortable(size_t wordCount, uint8_t* buffer) {
     return 0;
   }
   // we must be negative - flip every bit
+  flipSign(buffer, byteCount, false);
+  // flipSign assumes 0x80 = negative and so flips too much in byte 1
   buffer[0] = 0;
-  for (size_t i = 1; i < wordCount; i+= 8) {
-    flipSign(&buffer[i], false);
-  }
   return 0;
 }
 
-int unmakeBigIntByteArraySortable(size_t wordCount, uint8_t* buffer) {
+int unmakeBigIntByteArraySortable(size_t bytes, uint8_t* buffer) {
   if (!isBigEndian) {
-    for (size_t i = 1; i <= wordCount / 2; i++) {
+    for (size_t i = 1; i <= bytes / 2; i++) {
       uint8_t swap = buffer[i];
-      buffer[i] = buffer[wordCount - i];
-      buffer[wordCount - i] = swap;
+      buffer[i] = buffer[bytes - i];
+      buffer[bytes - i] = swap;
     }
   }
   if ((buffer[0] & 0x01) == 0x00) {
     // we must be negative - flip every bit
+    flipSign(buffer, bytes, false);
     buffer[0] = 1;
-    for (size_t i = 1; i < wordCount; i+= 8) {
-      flipSign(&buffer[i], false);
-    }
     return 0;
   }
   // we're positive - we're gonna flip the sign to 0 and do nothing else
@@ -244,6 +261,46 @@ int unmakeBigIntByteArraySortable(size_t wordCount, uint8_t* buffer) {
 int parseFormat(const char* format, std::vector<Format> *formats) {
   int formatLength = strlen(format);
   return parseFormat(format, formatLength, formats);
+}
+int formatsToString(std::vector<Format> *formats, char** format) {
+  // TODO: dynamic format;
+  int size = 1;
+  for(size_t i = 0; i < formats->size(); i++) {
+    int formatSize = formats->at(0).size;
+    size += 1;
+    if (formatSize >= 10000) {
+      size += 10;// fuck it - if we've got > 10 digits of size info we're in trouble
+    }
+    else if (formatSize >= 1000) {
+      size += 4;
+    }
+    else if (formatSize >= 100) {
+      size += 3;
+    }
+    else if (formatSize >= 10) {
+      size += 2;
+    }
+    else if (formatSize >= 1) {
+      size += 1;
+    }
+
+  }
+  *format = (char*)calloc(sizeof(char), size);
+  char* formatPtr = *format;
+  for(size_t i = 0; i < formats->size(); i++) {
+    Format format = formats->at(i);
+    char formatChar = format.format;
+    if (FieldIsWTItem(formatChar)) {
+      formatChar = 'u';
+    }
+    if (format.size) {
+      formatPtr += sprintf(formatPtr, "%d%c", format.size, formatChar);
+    }
+    else {
+      formatPtr += sprintf(formatPtr, "%c", formatChar);
+    }
+  }
+  return 0;
 }
 
 void unpackItemForFormat(
@@ -287,26 +344,25 @@ void unpackItemForFormat(
  */
 int packItem(
   WT_PACK_STREAM *stream,
-  QueryValueOrWT_ITEM* incomingItem
+  QueryValue* item
 ) {
-  QueryValue& item = incomingItem->queryValue;
-  if (item.dataType == FIELD_STRING) {
-    return wiredtiger_pack_str(stream, (char*)item.value.valuePtr);
+  if (item->dataType == FIELD_STRING) {
+    return wiredtiger_pack_str(stream, (char*)item->value.valuePtr);
   }
-  else if (item.dataType == FIELD_BYTE || item.dataType == FIELD_HALF || item.dataType == FIELD_INT || item.dataType == FIELD_INT2 || item.dataType == FIELD_LONG) {
-    int64_t intVal = (int64_t)item.value.valueUint;
+  else if (item->dataType == FIELD_BYTE || item->dataType == FIELD_HALF || item->dataType == FIELD_INT || item->dataType == FIELD_INT2 || item->dataType == FIELD_LONG) {
+    int64_t intVal = (int64_t)item->value.valueUint;
     // HUGE TODO: this code is unusable without casting to the right int size
     return wiredtiger_pack_int(stream, intVal);
   }
-  else if (item.dataType == FIELD_BITFIELD || item.dataType == FIELD_UBYTE || item.dataType == FIELD_UHALF || item.dataType == FIELD_UINT || item.dataType == FIELD_UINT2 || item.dataType == FIELD_ULONG) {
-    uint64_t intVal = item.value.valueUint;
+  else if (item->dataType == FIELD_BITFIELD || item->dataType == FIELD_UBYTE || item->dataType == FIELD_UHALF || item->dataType == FIELD_UINT || item->dataType == FIELD_UINT2 || item->dataType == FIELD_ULONG) {
+    uint64_t intVal = item->value.valueUint;
     // HUGE TODO: this code is unusable without casting to the right int size
     return wiredtiger_pack_uint(stream, intVal);
   }
-  else if (item.dataType == FIELD_WT_ITEM) {
+  else if (item->dataType == FIELD_WT_ITEM) {
     WT_ITEM wt;
-    wt.data = item.value.valuePtr;
-    wt.size = item.size;
+    wt.data = item->value.valuePtr;
+    wt.size = item->size;
     return wiredtiger_pack_item(stream, &wt);
   }
   printf("Invalid type\n");
@@ -320,7 +376,7 @@ int packItem(
 int packItems(
   WT_SESSION* session,
   const char* format,
-  std::vector<QueryValueOrWT_ITEM>* items,
+  std::vector<QueryValue>* items,
   void** buffer,
   size_t* bufferSize,
   size_t* usedSize
@@ -345,33 +401,67 @@ int packItems(
 }
 
 char* copyCfgValue(WT_CONFIG_ITEM *cfg) {
+  if (cfg->type < 0 || cfg->type > WT_CONFIG_ITEM_TYPE::WT_CONFIG_ITEM_STRUCT || cfg->len == 0 || cfg->str == NULL) {
+    return NULL;
+  }
   char* value = (char*)malloc(cfg->len + 1);
   memcpy(value, cfg->str, cfg->len);
   bzero(value + cfg->len, 1);
   return value;
 }
 
-// I'm a bit worried that sometimes a value.value may be an actual pointer and sometimes it may be a value pretending to be a pointer
-// on extracting values from node (e.g., table::insertMany) they're always pointers.
-void freeExtracted(QueryValue value) {
-  if (!value.noFree && value.value.valuePtr != NULL) {
-    free(value.value.valuePtr);
+
+
+void populateAvListForPackingOrUnPacking(
+  std::vector<QueryValue>* valueArray,
+  std::vector<WT_ITEM>* wtItems,
+  av_alist* argList,
+  size_t i,
+  Format format,
+  bool forWrite
+) {
+  if (forWrite && format.format == FIELD_PADDING) {
+    // generally we shouldn't call it with a padding byte
+    // this might bite us in the ass when implementing unique indexes and we need to pass in a null char to this
+    return;
+  }
+  if (FieldIsWTItem(format.format) || format.format == FIELD_PADDING) {
+    // when writing, valueArray should be considered const and not modified
+    // setting valueArray.wtItem.* relies on the shape of wtItem and queryValue being identical. Gross.
+    // for reading - there is no such requirement and we dont want the cost of allocating a new WT_ITEM vector
+    if (forWrite) {
+      (*wtItems)[i].data = (*valueArray)[i].value.valuePtr;
+      (*wtItems)[i].size = (*valueArray)[i].size;
+      av_ptr(*argList, WT_ITEM*, &(*wtItems)[i]);
+    }
+    else {
+      // we fake that a QueryValue is a WT_ITEM (they're at least the same size)
+      // in populate we'll pull the data out and rebuild this item correctly
+      av_ptr(*argList, WT_ITEM*, &(*valueArray)[i]);
+      (*valueArray)[i].dataType = format.format;
+    }
+  }
+  else {
+    if (forWrite) {
+      if (FieldIsPtr(format.format)) {
+        av_ptr(*argList, void*, (*valueArray)[i].value.valuePtr);
+      }
+      else {
+        av_uint(*argList, (*valueArray)[i].value.valueUint);
+      }
+    }
+    else {
+      if (FieldIsPtr(format.format)) {
+        av_ptr(*argList, void*, &(*valueArray)[i].value.valuePtr);
+      }
+      else {
+        av_ptr(*argList, void*, &(*valueArray)[i].value.valueUint);
+      }
+      (*valueArray)[i].dataType = format.format;
+    }
   }
 }
 
-void freeQueryValues(std::vector<QueryValue>* values) {
-  for (size_t a = 0; a < values->size(); a++) {
-    freeExtracted(values->at(a));
-  }
-}
-
-void freeQueryValues(QueryValueOrWT_ITEM* values, int length) {
-  for (int i = 0; i < length; i++) {
-    freeExtracted(values[i].queryValue);
-  }
-
-  free(values);
-}
 
 int cursorForCondition(
   WT_SESSION* session,
@@ -385,6 +475,7 @@ int cursorForCondition(
 ) {
   if (condition.operation == OPERATION_INDEX) {
     RETURN_IF_ERROR(session->open_cursor(session, condition.index, NULL, "raw", conditionCursorPointer));
+    // TODO: Why are we calling next here?
     RETURN_IF_ERROR((*conditionCursorPointer)->next(*conditionCursorPointer));
     return 0;
   }

@@ -75,6 +75,9 @@ namespace wiredtiger::binding {
   );
 
 
+  void ThrowExtractError(int result, const FunctionCallbackInfo<Value>& args);
+
+
   Local<Signature> NewSignature(
     Isolate* isolate,
     Local<FunctionTemplate> receiver = Local<FunctionTemplate>()
@@ -91,13 +94,13 @@ namespace wiredtiger::binding {
   int populateArray(
     Isolate* isolate,
     Local<Array> items,
-    QueryValueOrWT_ITEM* values,
+    QueryValue* values,
     size_t size
   );
   int populateArray(
     Isolate* isolate,
     Local<Array> items,
-    std::vector<QueryValueOrWT_ITEM>* values
+    std::vector<QueryValue>* values
   );
   int populateArrayItem(
     Isolate* isolate,
@@ -118,7 +121,7 @@ namespace wiredtiger::binding {
     Local<Array> values,
     Isolate* isolate,
     Local<Context> context,
-    std::vector<QueryValueOrWT_ITEM> *convertedValues,
+    std::vector<QueryValue> *convertedValues,
     std::vector<Format> *formats
   );
   int parseConditions(

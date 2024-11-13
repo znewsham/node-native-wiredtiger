@@ -71,16 +71,16 @@ namespace wiredtiger::binding {
     }
 
     size_t size = that.columnCount(false);
-    std::vector<QueryValueOrWT_ITEM> valueArray(size);
+    std::vector<QueryValue> valueArray(size);
     result = that.getKey(&valueArray); // after this point everything in valueArray is a QueryValue
     Local<Array> retArray = Array::New(isolate, size);
     if (result == INVALID_VALUE_TYPE) {
       THROW(Exception::TypeError, "Invalid type encountered");
     }
     for (size_t i = 0; i < size; i++) {
-      QueryValueOrWT_ITEM& item = valueArray[i];
+      QueryValue* item = &valueArray[i];
       Format format = !didRequestFormat ? that.formatAt(false, i) : requestedFormat.at(i);
-      result = populateArrayItem(isolate, retArray, i, item.queryValue.value, format.format, item.queryValue.size);
+      result = populateArrayItem(isolate, retArray, i, item->value, format.format, item->size);
       if (result == INVALID_VALUE_TYPE) {
         THROW(Exception::TypeError, "Invalid type encountered");
       }
@@ -106,7 +106,7 @@ namespace wiredtiger::binding {
       free(requestedFormatStr);
     }
     size_t size = that.columnCount(true);
-    std::vector<QueryValueOrWT_ITEM> valueArray(size);
+    std::vector<QueryValue> valueArray(size);
     if (didRequestFormat && requestedFormat.size() != that.columnCount(true)) {
       THROW(Exception::TypeError, "Incorrect column length");
     }
@@ -118,9 +118,9 @@ namespace wiredtiger::binding {
     }
     Local<Array> retArray = Array::New(isolate, size);
     for (size_t i = 0; i < size; i++) {
-      QueryValueOrWT_ITEM item = valueArray[i];
+      QueryValue* item = &valueArray[i];
       Format format = !didRequestFormat ? that.formatAt(true, i) : requestedFormat.at(i);
-      result = populateArrayItem(isolate, retArray, i, item.queryValue.value, format.format, item.queryValue.size);
+      result = populateArrayItem(isolate, retArray, i, item->value, format.format, item->size);
       if (result == INVALID_VALUE_TYPE) {
         THROW(Exception::TypeError, "Invalid type encountered");
       // free(valueArray);
@@ -134,16 +134,16 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
 
-    std::vector<QueryValueOrWT_ITEM>* values = new std::vector<QueryValueOrWT_ITEM>(args.Length());
+    std::vector<QueryValue>* values = new std::vector<QueryValue>(args.Length());
     for (int i = 0; i < args.Length(); i++) {
       int error = extractValue(
         args[i],
         isolate,
-        &(*values)[i].queryValue,
+        &(*values)[i],
         that.formatAt(false, i)
       );
       if (error != 0) {
-        THROW(Exception::TypeError, "Couldn't extract values");
+        ThrowExtractError(error, args);
         return;
       }
     }
@@ -155,16 +155,16 @@ namespace wiredtiger::binding {
     Isolate* isolate = Isolate::GetCurrent();
     Cursor& that = Unwrap<Cursor>(args.Holder());
 
-    std::vector<QueryValueOrWT_ITEM> values(args.Length());
+    std::vector<QueryValue> values(args.Length());
     for (int i = 0; i < args.Length(); i++) {
       int error = extractValue(
         args[i],
         isolate,
-        &values[i].queryValue,
+        &values[i],
         that.formatAt(true, i)
       );
       if (error != 0) {
-        THROW(Exception::TypeError, "Couldn't extract values");
+        ThrowExtractError(error, args);
         return;
       }
     }
@@ -309,13 +309,28 @@ namespace wiredtiger::binding {
     Return(NewLatin1String(isolate, that.getValueFormat()), args);
   }
 
+  void CursorGetterFlags(Local<String> property, const PropertyCallbackInfo<Value> &args) {
+    Isolate* isolate = Isolate::GetCurrent();
+    Cursor& that = Unwrap<Cursor>(args.Holder());
+    Return(Uint32::New(isolate, that.getFlags()), args);
+  }
+
+  void CursorSetterFlags(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void> &args) {
+    Isolate* isolate = Isolate::GetCurrent();
+    Cursor& that = Unwrap<Cursor>(args.Holder());
+    uint32_t intVal = value->ToUint32(isolate->GetCurrentContext()).ToLocalChecked()->Value();
+    that.setFlags(intVal);
+  }
+
   void CursorNewInternal(const FunctionCallbackInfo<Value>& args) {
+    Return(args.This(), args);
   }
 
   Local<Object> CursorGetNew(WT_CURSOR* wtCursor) {
     Isolate* isolate = Isolate::GetCurrent();
-    Local<Function> fn = Deref(isolate, CursorConstructorTmpl)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
-    Local<Object> obj = fn->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
+    Local<Function> fn = CursorConstructorTmpl.Get(isolate)->GetFunction(isolate->GetCurrentContext()).ToLocalChecked();
+    auto x = fn->NewInstance(isolate->GetCurrentContext());
+    Local<Object> obj = x.ToLocalChecked();
     Cursor* cursor = new Cursor(wtCursor);
     obj->SetAlignedPointerInInternalField(0, cursor);
     BindClassToV8<Cursor>(isolate, obj, cursor);
@@ -331,6 +346,7 @@ namespace wiredtiger::binding {
     // TODO: handle the result
     Cursor* cursor;
     session->openCursor(uri, config, &cursor);
+    cursor->setExternal();
     obj->SetAlignedPointerInInternalField(0, cursor);
     BindClassToV8<Cursor>(isolate, obj, cursor);
     return obj;
@@ -342,6 +358,7 @@ namespace wiredtiger::binding {
     tmpl->InstanceTemplate()->SetAccessor(NewLatin1String(isolate, "uri"), CursorAccessorUri);
     tmpl->InstanceTemplate()->SetAccessor(NewLatin1String(isolate, "keyFormat"), CursorAccessorKeyFormat);
     tmpl->InstanceTemplate()->SetAccessor(NewLatin1String(isolate, "valueVormat"), CursorAccessorValueFormat);
+    tmpl->InstanceTemplate()->SetAccessor(NewLatin1String(isolate, "flags"), CursorGetterFlags, CursorSetterFlags);
   }
 
   void CursorInit(Local<Object> target) {

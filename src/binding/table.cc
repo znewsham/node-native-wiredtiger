@@ -32,48 +32,8 @@ namespace wiredtiger::binding {
     WT_SESSION* wtSession;
     db->conn->open_session(db->conn, NULL, NULL, &wtSession);
     WiredTigerSession* session = new WiredTigerSession(wtSession);
-    WiredTigerSessionRegister(session);
+    // WiredTigerSessionRegister(session);
     return session;
-  }
-
-
-  void ThrowError(int result, const FunctionCallbackInfo<Value>& args) {
-    if (result == CONDITION_NOT_OBJECT) {
-      THROW(Exception::TypeError, "Invalid Condition (not an object)");
-    }
-    else if (result == INDEX_NOT_STRING) {
-      THROW(Exception::TypeError, "Invalid Condition (index not a string)");
-    }
-    else if (result == OPERATION_NOT_INTEGER) {
-      THROW(Exception::TypeError, "Invalid Condition (operation not an integer)");
-    }
-    else if (result == VALUES_NOT_ARRAY) {
-      THROW(Exception::TypeError, "Invalid Condition (values not an array)");
-    }
-    else if (result == CONDITIONS_NOT_ARRAY) {
-      THROW(Exception::TypeError, "Invalid Condition (conditions not an array)");
-    }
-    else if (result == INVALID_VALUE_TYPE) {
-      THROW(Exception::TypeError, "Invalid Condition (invalid value type)");
-    }
-    else if (result == VALUES_AND_CONDITIONS) {
-      THROW(Exception::TypeError, "Invalid Condition (can't specify sub conditions and values)");
-    }
-    else if (result == INVALID_OPERATOR) {
-      THROW(Exception::TypeError, "Invalid Condition (AND/OR mismatch with values/conditions)");
-    }
-    else if (result == NO_VALUES_OR_CONDITIONS) {
-      THROW(Exception::TypeError, "Invalid Condition (missing values or conditions)");
-    }
-    else if (result == EMPTY_CONDITIONS) {
-      THROW(Exception::TypeError, "Invalid Condition (empty conditions)");
-    }
-    else if (result == EMPTY_VALUES) {
-      THROW(Exception::TypeError, "Invalid Condition (empty values)");
-    }
-    else {
-      THROW(Exception::TypeError, "Unknown error");
-    }
   }
 
   void WiredTigerTableFind(const FunctionCallbackInfo<Value>& args) {
@@ -118,7 +78,7 @@ namespace wiredtiger::binding {
     conditions = new std::vector<QueryCondition>(arr->Length()); // deleted when the find cursor closes
     int result = parseConditions(isolate, context, &arr, conditions, that.getValueFormats());
     if (result != 0) {
-      return ThrowError(result, args);
+      return ThrowExtractError(result, args);
     }
     Local<Object> object = wiredtiger::binding::FindCursorGetNew(
       that.getTableName(),
@@ -164,8 +124,8 @@ namespace wiredtiger::binding {
       Local<Array> values = Local<Array>::Cast(valuesHolder);
       size_t keySize = that->getKeyFormats()->size();
       size_t valueSize = that->getValueFormats()->size();
-      std::vector<QueryValueOrWT_ITEM>* convertedKeys = new std::vector<QueryValueOrWT_ITEM>(keySize); // deleted with the EntryOfVectors
-      std::vector<QueryValueOrWT_ITEM>* convertedValues = new std::vector<QueryValueOrWT_ITEM>(valueSize); // deleted with the EntryOfVectors
+      std::vector<QueryValue>* convertedKeys = new std::vector<QueryValue>(keySize); // deleted with the EntryOfVectors
+      std::vector<QueryValue>* convertedValues = new std::vector<QueryValue>(valueSize); // deleted with the EntryOfVectors
       error = extractValues(
         keys,
         isolate,
@@ -219,13 +179,13 @@ namespace wiredtiger::binding {
     std::vector<QueryCondition> conditions(conditionsArray->Length());
     int result = parseConditions(isolate, context, &conditionsArray, &conditions, that.getValueFormats());
     std::vector<Format>* valueFormats = that.getValueFormats();
-    std::vector<QueryValueOrWT_ITEM> newValues(valueFormats->size());
+    std::vector<QueryValue> newValues(valueFormats->size());
     if (newValues.size() != newValuesArray->Length()) {
       THROW(Exception::TypeError, "Values array length must match");
     }
     result = extractValues(newValuesArray, isolate, context, &newValues, valueFormats);
     if (result != 0) {
-      return ThrowError(result, args);
+      return ThrowExtractError(result, args);
     }
     int updatedCount;
     WiredTigerSession* session = GetSession(that.getDb());
@@ -278,7 +238,7 @@ namespace wiredtiger::binding {
     std::vector<QueryCondition> conditions(arr->Length());
     result = parseConditions(isolate, context, &arr, &conditions, that.getValueFormats());
     if (result != 0) {
-      return ThrowError(result, args);
+      return ThrowExtractError(result, args);
     }
     int deletedCount = 0;
     result = session->beginTransaction(NULL);
@@ -338,7 +298,6 @@ namespace wiredtiger::binding {
     if (error) {
       THROW(Exception::TypeError, wiredtiger_strerror(error));
     }
-    printf("Completed insert\n");
   }
 
 

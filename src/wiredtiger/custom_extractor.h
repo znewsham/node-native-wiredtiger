@@ -2,13 +2,14 @@
 #include "types.h"
 #include "../helpers.h"
 #include "helpers.h"
-#include <string.h>
-#include <map>
 
 using namespace std;
 
 #ifndef WIREDTIGER_CUSTOM_EXTRACTOR_H
 #define WIREDTIGER_CUSTOM_EXTRACTOR_H
+
+#define EXTRACTOR_TYPE_NGRAM 1
+#define EXTRACTOR_TYPE_CUSTOM 2
 
 namespace wiredtiger {
 
@@ -63,47 +64,6 @@ namespace wiredtiger {
         WT_CURSOR *result_cursor
       );
   };
-
-  int terminateNgrams(
-    WT_EXTRACTOR* extractor,
-    WT_SESSION* session
-  );
-
-  int customizeNgrams(
-    WT_EXTRACTOR *extractor,
-    WT_SESSION *session,
-    const char *uri,
-    WT_CONFIG_ITEM *appcfg,
-    WT_EXTRACTOR **customp
-  );
-
-  int extractNgrams(
-    WT_EXTRACTOR *extractor,
-    WT_SESSION *session,
-    const WT_ITEM *key,
-    const WT_ITEM *value,
-    WT_CURSOR *result_cursor
-  );
-
-  int extractWords(
-    WT_EXTRACTOR *extractor,
-    WT_SESSION *session,
-    const WT_ITEM *key,
-    const WT_ITEM *value,
-    WT_CURSOR *result_cursor
-  );
-
-  union ExtractorConfig {
-    // TODO: more than just ngram?
-    int ngram;
-  };
-
-  typedef struct ExtractorReferences {
-    WT_EXTRACTOR extractor;
-    int references;
-    char* key;
-    ExtractorConfig config;
-  } ExtractorReferences;
 }
 
 #endif

@@ -3,7 +3,7 @@ import { WiredTigerDB } from "./db.js";
 import { WiredTigerTable, WiredTigerSession } from "./getModule.js";
 import { configToString } from "./helpers.js";
 import { FindCursor } from "./findCursor.js";
-import { CreateTypeAndName, FindOptions, FlatFindOptions, Operation, QueryCondition } from "./types.js";
+import { CreateTypeAndName, FindOptions, FlatFindOptions, IndexColumnOptions, IndexCreationOptions, Operation, QueryCondition } from "./types.js";
 import { BSON } from "bson";
 
 
@@ -58,28 +58,35 @@ export class Collection
     }
     else if ("schema" in this.#config) {
       const config: SchemaConfiguration<ISchema> = this.#config;
-      const columnDefinitions: ColumnSpec[] = Object.entries(config.schema).map(([name, spec]) => {
+      const columnDefinitions: ColumnSpec[] = Object.entries(config.schema).map(([name, spec], index) => {
+        if (index === 0 && name != Collection.ID_NAME) {
+          throw new Error(`${Collection.ID_NAME} must be the first item in the schema, not ${name}`);
+        }
         return {
           actualType: spec?.actualType,
           columnFormat: spec?.columnFormat,
           readFormat: spec?.readFormat,
-          name
+          name,
+          // indexes start at 1 because of the _id
+          columnIndex: index
         };
       });
 
       if (config.schema[RemainingSymbol]) {
         columnDefinitions.push({
           name: Collection.REMAINING_NAME,
+          columnIndex: columnDefinitions.length,
           ...config.schema[RemainingSymbol]
         });
 
         // @ts-ignore TODO - I think remaining needs to be a special BSON type that is always an object
-        Object.entries(config.schema[RemainingSymbol].bsonType).forEach(([name, spec]) => {
+        Object.entries(config.schema[RemainingSymbol].bsonType).forEach(([name, spec], index) => {
           this.#remainingSpecs.push({
             name,
             actualType: spec?.actualType,
             columnFormat: spec?.columnFormat,
-            readFormat: spec?.readFormat
+            readFormat: spec?.readFormat,
+            columnIndex: index
           });
         });
       }
@@ -105,12 +112,14 @@ export class Collection
       this.#keyDefinition = {
         name: Collection.ID_NAME,
         columnFormat: this.#config.key_format || "r",
-        actualType: SupportedTypes.ulong
+        actualType: SupportedTypes.ulong,
+        columnIndex: -1,
       };
       this.#valueDefinitions = columns.slice(1).map((name, i) => ({
         name,
         columnFormat: valueFormats[i],
         actualType: SupportedTypes.binary, // TODO: Map this? Maybe not - you use raw, you get raw :shrug:
+        columnIndex: i
       }));
 
       configString = configToString({
@@ -144,10 +153,73 @@ export class Collection
     // }
   }
 
-  createIndex(name: string, columns: (keyof Omit<ISchema, "_id"> & string)[], extra: string = "") {
+  createIndex(
+    name: string,
+    columns: IndexColumnOptions<Omit<ISchema, "_id">>[],
+    options?: IndexCreationOptions
+  ) {
     this.#ensureTable();
-    const columnStr = columns.length ? `columns=(${columns.join(",")})` : "";
-    this._table.createIndex(name, `${columnStr}${extra}`);
+    const useCustomExtractorOrCollator = !!columns.find(k => typeof k !== "string" && (k.extractor || k.direction));
+    // TODO: custom collator but not custom extractor?
+    if (!useCustomExtractorOrCollator) {
+      this._table.createIndex(name, `columns=[${columns.join(",")}]`);
+    }
+
+    const columnSet = new Set<string>(columns.flatMap(column => typeof column === "string" ? column : column.columns));
+    let direction = 1;
+    const directions = columns.map(column => typeof column === "string" ? 1 : column.direction || 1);
+    if (Math.max(...directions) === Math.min(...directions)) {
+      direction = directions[0];
+    }
+    else {
+      console.log(directions);
+      direction = 0; // compound per-column direction
+    }
+    const keyFormat = columns.map(column => {
+      if (typeof column === "string") {
+        return this.#columnDefinitionMap.get(column)?.columnFormat;
+      }
+      else if (column.columns.length == 1) {
+        return this.#columnDefinitionMap.get(column.columns[0])?.columnFormat;
+      }
+      return "S";
+    }).join("");
+    const config = {
+      ...options,
+      // right now we only support multi key indexes on strings - so we can just default to "S" if it's an object
+      // down the road, we'll need to detect what the key is
+      key_format: keyFormat,
+      extractor: "multiKey",
+      collator: "compound",
+      app_metadata: {
+        table_value_format: this.#valueDefinitions.map(({ columnFormat }) => columnFormat).join(""),
+        key_extract_format: this.#valueDefinitions.map(({ name, readFormat, columnFormat }) => columnSet.has(name) ? readFormat || columnFormat : 'x').join(""),
+        key_format: keyFormat,
+        // used to share extractors across indexes where possible
+        index_id: `${Math.random()}`, // TODO: this should be set to the unique combo of table_value_format (maybe with padding replacing the keys we don't care about?) and the column specs
+
+        direction,
+        columns: columns.length,
+        ...(Object.fromEntries(columns.map((column, i) => {
+          if (typeof column === "string") {
+            return [
+              `column${i}`,
+              { columns: [this.#columnDefinitionMap.get(column)?.columnIndex], direction: 1 }
+            ];
+          }
+          return [
+            `column${i}`,
+            {
+              columns: column.columns.map(c => this.#columnDefinitionMap.get(c)?.columnIndex),
+              ngrams: column.ngrams,
+              direction: column.direction,
+              extractor: column.extractor
+            }
+          ];
+        })))
+      }
+    };
+    this._table.createIndex(name, configToString(config));
   }
 
   findOne(): ESchema | undefined {

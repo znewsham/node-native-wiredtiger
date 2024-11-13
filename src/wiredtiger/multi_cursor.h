@@ -26,7 +26,7 @@ namespace wiredtiger {
   } CursorMetrics;
 
   typedef struct UniqueKeyVector {
-    std::vector<QueryValueOrWT_ITEM>* items;
+    std::vector<QueryValue>* items;
   } UniqueKeyVector;
 
   struct UniqueKeyVectorCmp {
@@ -37,22 +37,22 @@ namespace wiredtiger {
       }
       for (size_t i = 0; i < a.items->size(); i++) {
         // TODO: use the collator? Is that even possible having unpacked the keys?
-        QueryValue& aQV = (*a.items)[i].queryValue;
-        QueryValue& bQV = (*b.items)[i].queryValue;
-        if (aQV.dataType != bQV.dataType) {
-          return (int)aQV.dataType - (int)bQV.dataType;
+        QueryValue* aQV = &(*a.items)[i];
+        QueryValue* bQV = &(*b.items)[i];
+        if (aQV->dataType != bQV->dataType) {
+          return (int)aQV->dataType - (int)bQV->dataType;
         }
         int cmp;
         if (
-          aQV.dataType == FIELD_CHAR_ARRAY
+          aQV->dataType == FIELD_CHAR_ARRAY
         ) {
           // incredibly, it looks like wiredtiger doesn't 0 out the bytes of a char array (even though they claim they do)
           cmp = strncmp(
-            (char*)aQV.value.valuePtr,
-            (char*)bQV.value.valuePtr,
+            (char*)aQV->value.valuePtr,
+            (char*)bQV->value.valuePtr,
             max(
-              strnlen((char*)aQV.value.valuePtr, (size_t)aQV.size),
-              strnlen((char*)bQV.value.valuePtr, (size_t)aQV.size)
+              strnlen((char*)aQV->value.valuePtr, (size_t)aQV->size),
+              strnlen((char*)bQV->value.valuePtr, (size_t)aQV->size)
             )
           );
           if (cmp != 0) {
@@ -60,19 +60,19 @@ namespace wiredtiger {
           }
           continue;
         }
-        if (aQV.dataType == FIELD_WT_ITEM
-          || aQV.dataType == FIELD_WT_UITEM
-          || aQV.dataType == FIELD_WT_ITEM_BIGINT
-          || aQV.dataType == FIELD_WT_ITEM_DOUBLE
+        if (aQV->dataType == FIELD_WT_ITEM
+          || aQV->dataType == FIELD_WT_UITEM
+          || aQV->dataType == FIELD_WT_ITEM_BIGINT
+          || aQV->dataType == FIELD_WT_ITEM_DOUBLE
         ) {
-          cmp = memcmp(aQV.value.valuePtr, bQV.value.valuePtr, aQV.size);
+          cmp = memcmp(aQV->value.valuePtr, bQV->value.valuePtr, aQV->size);
           if (cmp != 0) {
             return cmp > 0;
           }
           continue;
         }
-        if (aQV.dataType == FIELD_STRING) {
-          cmp = strcmp((char*)aQV.value.valuePtr, (char*)bQV.value.valuePtr);
+        if (aQV->dataType == FIELD_STRING) {
+          cmp = strcmp((char*)aQV->value.valuePtr, (char*)bQV->value.valuePtr);
           if (cmp != 0) {
             return cmp > 0;
           }
@@ -80,8 +80,8 @@ namespace wiredtiger {
         }
 
         // everything else is a number
-        if (aQV.value.valueUint != bQV.value.valueUint) {
-          return (aQV.value.valueUint - bQV.value.valueUint) > 0;
+        if (aQV->value.valueUint != bQV->value.valueUint) {
+          return (aQV->value.valueUint - bQV->value.valueUint) > 0;
         }
       }
 
@@ -103,9 +103,10 @@ namespace wiredtiger {
       MultiCursor(WT_CURSOR* cursor);
       MultiCursor(WiredTigerSession* session, char* tableName, std::vector<QueryCondition>* conditions);
       virtual ~MultiCursor();
+      int error = 0;
 
-      int next(std::vector<QueryValueOrWT_ITEM>** keys, std::vector<QueryValueOrWT_ITEM>** values);
-      int next(std::vector<QueryValueOrWT_ITEM>** keys);
+      int next(std::vector<QueryValue>** keys, std::vector<QueryValue>** values);
+      int next(std::vector<QueryValue>** keys);
       int count(int* counter);
       int reset();
       int close();

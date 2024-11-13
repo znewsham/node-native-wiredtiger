@@ -21,7 +21,7 @@ namespace wiredtiger {
     sprintf(tableCursorUri, "table:%s", tableName);
 
     // TODO: throw on error somehow?
-    cursorForConditions(
+    error = cursorForConditions(
       session->getWTSession(),
       tableCursorUri,
       joinCursorUri,
@@ -48,10 +48,12 @@ namespace wiredtiger {
       free(this->buffers.at(i));
     }
     this->buffers.clear();
-    for (size_t i = 0; i < this->cursors.size(); i++) {
-      WT_CURSOR* nextCursor = this->cursors.at(i);
-      RETURN_IF_ERROR(nextCursor->reset(nextCursor));
-    }
+    // for (size_t i = 0; i < this->cursors.size(); i++) {
+    //   printf("Resetting: %d/%d\n", i, this->cursors.size());
+    //   WT_CURSOR* nextCursor = this->cursors.at(i);
+    //   RETURN_IF_ERROR(nextCursor->reset(nextCursor));
+    // }
+    RETURN_IF_ERROR(this->cursor->reset(this->cursor));
     this->isComplete = false;
     this->isReset = true;
     this->seenVectorKeys.clear();
@@ -71,13 +73,13 @@ namespace wiredtiger {
     return 0;
   }
 
-  int MultiCursor::next(std::vector<QueryValueOrWT_ITEM>** keyArray) {
+  int MultiCursor::next(std::vector<QueryValue>** keyArray) {
     int error;
     if (isComplete) {
       return WT_NOTFOUND;
     }
     while ((error = Cursor::next()) == 0) {
-      *keyArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(false));
+      *keyArray = new std::vector<QueryValue>(columnCount(false));
       RETURN_IF_ERROR(this->getKey(*keyArray));
       int count = seenVectorKeys.count({ *keyArray });
       if (count != 0) {
@@ -102,7 +104,7 @@ namespace wiredtiger {
     if (isComplete) {
       return WT_NOTFOUND;
     }
-    std::vector<QueryValueOrWT_ITEM>* keyArray = NULL;
+    std::vector<QueryValue>* keyArray = NULL;
     while((error = this->next(&keyArray)) == 0) {
       *counter += 1;
     }
@@ -113,13 +115,13 @@ namespace wiredtiger {
   }
 
 
-  int MultiCursor::next(std::vector<QueryValueOrWT_ITEM>** keyArray, std::vector<QueryValueOrWT_ITEM>** valueArray) {
+  int MultiCursor::next(std::vector<QueryValue>** keyArray, std::vector<QueryValue>** valueArray) {
     int error;
     if (isComplete) {
       return WT_NOTFOUND;
     }
     while ((error = Cursor::next()) == 0) {
-      *keyArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(false));
+      *keyArray = new std::vector<QueryValue>(columnCount(false));
       RETURN_IF_ERROR(this->getKey(*keyArray));
       int count = seenVectorKeys.count({ *keyArray });
       if (count != 0) {
@@ -127,7 +129,7 @@ namespace wiredtiger {
         continue;
       }
       seenVectorKeys.insert({ *keyArray });
-      *valueArray = new std::vector<QueryValueOrWT_ITEM>(columnCount(true));
+      *valueArray = new std::vector<QueryValue>(columnCount(true));
       RETURN_IF_ERROR(this->getValue(*valueArray));
       break;
     }

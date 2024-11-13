@@ -20,6 +20,7 @@ namespace wiredtiger {
   }
 
   WiredTigerSession::~WiredTigerSession() {
+    printf("Reset: %p\n", this);
     // TODO: close session if not already
   }
 

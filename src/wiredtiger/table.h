@@ -43,7 +43,7 @@ class WiredTigerTable {
 
     // TODO: int find();
     int deleteMany(WiredTigerSession* session, std::vector<QueryCondition>* conditions, int* deletedCount);
-    int updateMany(WiredTigerSession* session, std::vector<QueryCondition>* conditions, std::vector<QueryValueOrWT_ITEM>* values, int* updatedCount);
+    int updateMany(WiredTigerSession* session, std::vector<QueryCondition>* conditions, std::vector<QueryValue>* values, int* updatedCount);
     std::vector<Format>* getKeyFormats();
     std::vector<Format>* getValueFormats();
 

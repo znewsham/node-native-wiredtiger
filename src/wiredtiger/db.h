@@ -3,7 +3,9 @@
 #include "../helpers.h"
 #include "helpers.h"
 #include "custom_extractor.h"
+#include "multi_key_extractor.h"
 #include "custom_collator.h"
+#include "compound_directional_collator.h"
 #include <string.h>
 #include <map>
 
@@ -14,12 +16,9 @@ using namespace std;
 
 namespace wiredtiger {
 
-static WT_COLLATOR nocasecoll = { compareNoCase, NULL, NULL };
-static WT_COLLATOR reversecoll = { compareReverse, NULL, NULL };
-static WT_COLLATOR regularcoll = { compareRegular, NULL, NULL };
+static WT_COLLATOR compoundDirectionalCollator = { NULL, CompoundDirectionalCollator::Customize, NULL };
 
-static WT_EXTRACTOR wordsIndex = { extractWords, NULL, NULL };
-static WT_EXTRACTOR ngramsIndex = { extractNgrams, customizeNgrams, terminateNgrams };
+static WT_EXTRACTOR multiKeyIndex = { NULL, MultiKeyExtractor::Customize, NULL };
 
 
 class WiredTigerDB {
@@ -40,11 +39,8 @@ class WiredTigerDB {
         return WT_NOTFOUND;// TODO: real error
       }
       RETURN_IF_ERROR(wiredtiger_open(directory, NULL, options, &this->conn));
-      RETURN_IF_ERROR(conn->add_collator(conn, "nocase", &nocasecoll, NULL));
-      RETURN_IF_ERROR(conn->add_collator(conn, "reverse", &reversecoll, NULL));
-      RETURN_IF_ERROR(conn->add_collator(conn, "regular", &regularcoll, NULL));
-      RETURN_IF_ERROR(conn->add_extractor(conn, "words", &wordsIndex, NULL));
-      RETURN_IF_ERROR(conn->add_extractor(conn, "ngrams", &ngramsIndex, NULL));
+      RETURN_IF_ERROR(conn->add_collator(conn, "compound", &compoundDirectionalCollator, NULL));
+      RETURN_IF_ERROR(conn->add_extractor(conn, "multiKey", &multiKeyIndex, NULL));
       _isOpen = true;
       return 0;
     }
@@ -65,12 +61,12 @@ class WiredTigerDB {
 
     int addExtractor(char* name, CustomExtractor* extractor) {
       extractor->extractor.extract = CustomExtractor::Extract;
-      if (extractor->hasCustomize) {
-        extractor->extractor.customize = CustomExtractor::Customize;
-      }
-      if (extractor->hasTerminate) {
-        extractor->extractor.terminate = CustomExtractor::Terminate;
-      }
+      // if (extractor->hasCustomize) {
+      //   extractor->extractor.customize = CustomExtractor::Customize;
+      // }
+      // if (extractor->hasTerminate) {
+      //   extractor->extractor.terminate = CustomExtractor::Terminate;
+      // }
       this->conn->add_extractor(this->conn, name, &extractor->extractor, NULL);
       return 0;
     }

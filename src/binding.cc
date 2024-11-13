@@ -13,6 +13,7 @@
 #include "binding/map_table.h"
 #include "binding/custom_extractor.h"
 #include "binding/custom_collator.h"
+#include "binding/wt_item.h"
 #include "v8-version.h"
 
 #include <assert.h>
@@ -42,6 +43,7 @@ void init(Local<Object> exports, v8::Local<v8::Value> module, void* priv) {
   wiredtiger::binding::WiredTigerMapTableInit(exports);
   wiredtiger::binding::CustomExtractorInit(exports);
   wiredtiger::binding::CustomCollatorInit(exports);
+  wiredtiger::binding::WtItemInit(exports);
 }
 
 NODE_MODULE(NODE_GYP_MODULE_NAME, init)

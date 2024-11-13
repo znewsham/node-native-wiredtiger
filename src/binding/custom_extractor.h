@@ -10,6 +10,7 @@ namespace wiredtiger::binding {
   class WrappedCustomExtractor: public CustomExtractor {
     private:
       v8::Global<v8::Object> self;
+      v8::Global<v8::Function> extractCb2;
       Nan::Callback extractCb;
       Nan::Callback customizeCb;
       Nan::Callback terminateCb;

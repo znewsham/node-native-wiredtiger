@@ -9,5 +9,6 @@ export const {
   WiredTigerTable,
   WiredTigerMapTable,
   CustomExtractor,
-  CustomCollator
+  CustomCollator,
+  wiredTigerStructUnpack
 } = native;
