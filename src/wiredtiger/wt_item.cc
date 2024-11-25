@@ -15,6 +15,7 @@ namespace wiredtiger {
     av_ptr(argList, WT_SESSION*, session);
     av_ptr(argList, void*, item->data);
     av_uint(argList, item->size);
+
     av_ptr(argList, char*, cleanedFormat);
     for (size_t i = 0; i < formats->size(); i++) {
       populateAvListForPackingOrUnPacking(

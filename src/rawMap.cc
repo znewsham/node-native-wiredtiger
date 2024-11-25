@@ -46,9 +46,6 @@ int main() {
   milliseconds startRun = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
   for (int i = 0; i < ITERATIONS; i++) {
     string_view v = myMap.at(keys[keyDistr(gen)]);
-    if (keyDistr(gen) > KEY_COUNT) {
-      printf("%s\n", v.data());
-    }
   }
   milliseconds endRun = duration_cast<milliseconds>(system_clock::now().time_since_epoch());
   printf("Setup: %d, Run: %d\n", startRun - startSetup, endRun - startRun);

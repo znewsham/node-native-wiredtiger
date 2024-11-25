@@ -61,6 +61,12 @@ namespace wiredtiger {
         std::vector<std::string>* results
       );
 
+      WiredTigerMapTable(WiredTigerDB* db, char* tableName, char* config):
+      WiredTigerTable::WiredTigerTable(db, tableName, config) // TODO
+      {
+
+      }
+
       WiredTigerMapTable(WiredTigerDB* db, char* tableName):
       WiredTigerTable::WiredTigerTable(db, tableName, (char*)"key_format=S,value_format=S") // TODO
       {

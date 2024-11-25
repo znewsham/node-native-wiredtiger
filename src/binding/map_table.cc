@@ -112,7 +112,7 @@ namespace wiredtiger::binding {
 
   void WiredTigerMapTableNew(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = Isolate::GetCurrent();
-    if (args.Length() != 2 || !args[0]->IsObject() || !args[1]->IsString()) {
+    if (args.Length() != 3 || !args[0]->IsObject() || !args[1]->IsString()) {
       THROW(Exception::TypeError, "Must take a DB and string argument");
       return;
     }

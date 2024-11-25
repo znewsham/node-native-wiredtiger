@@ -1,7 +1,7 @@
 import { setTimeout } from "timers/promises";
-import { Map as NativeMap, WiredTigerMapTable } from "../src/getModule.js";
+// import { Map as NativeMap, WiredTigerMapTable } from "../src/getModule.js";
 import { makeid } from "./raw/utils.js";
-import { WiredTigerDB } from "../src/db.js";
+// import { WiredTigerDB } from "../src/db.js";
 import { WiredTigerSession } from "../src/types.js";
 
 // class WiredTigerMap {
@@ -33,6 +33,7 @@ function testMap(map: { get(key: string): string | undefined, set(key: string, v
   for (let i = 0; i < iterations; i++) {
     const key = keys[Math.floor(Math.random() * keys.length)];
     const value = map.get(key);
+    globalThis.value = value;
   }
   const end = performance.now();
   return { time: end - start, setup: endSetup - startSetup };
@@ -61,37 +62,40 @@ class ObjectMap {
 }
 
 
-class  ConvertToBufferNativeMap extends NativeMap {
-  #retain = new Array(keyCount);
-  set(key, value) {
-    const buffer = Buffer.from(value, "utf-8");
-    super.set(key, buffer);
-  }
+// class  ConvertToBufferNativeMap extends NativeMap {
+//   #retain = new Array(keyCount);
+//   set(key, value) {
+//     const buffer = Buffer.from(value, "utf-8");
+//     super.set(key, buffer);
+//   }
 
-  get(key) {
-    return super.get(key)?.toString("utf-8");
-  }
-}
+//   get(key) {
+//     return super.get(key)?.toString("utf-8");
+//   }
+// }
 
-class ConvertToBufferWiredTigerMapTable extends WiredTigerMapTable {
-  set(key, value) {
-    console.log("HERE");
-    super.set(key, Buffer.from(value, "utf-8"));
-  }
-}
+// class ConvertToBufferWiredTigerMapTable extends WiredTigerMapTable {
+//   set(key, value) {
+//     super.set(key, Buffer.from(value, "utf-8"));
+//   }
+// }
 
 async function test() {
-  const db = new WiredTigerDB(null, { create: true, in_memory: true, cache_size: "1GB" });
-  db.open();
-  const map = new ConvertToBufferMap<string, string>();
-  //console.log("map", testMap(map));
-  // const oMap = new ObjectMap();
-  // console.log("oMap", testMap(oMap));
-  const nativeMap = new ConvertToBufferNativeMap();
-  //console.log("NativeMap", testMap(nativeMap));
+  // const map = new Map<string, string>();
+  // console.log("map", testMap(map));
+  const oMap = new ConvertToBufferMap();
+  console.log("oMap", testMap(oMap));
+  // const nativeMap = new ConvertToBufferNativeMap();
+  // console.log("NativeMap", testMap(nativeMap));
   // console.log(nativeMap.get(keys[0]) == map.get(keys[0]));
-  console.log("WiredTigerMapTable", testMap(new ConvertToBufferWiredTigerMapTable(db.native, "testMap")));
+  // const db = new WiredTigerDB(null, { create: true, in_memory: true, cache_size: "1GB" });
+  // db.open();
+  // console.log("WiredTigerMapTable", testMap(new WiredTigerMapTable(db.native, "testMap")));
+  // const db2 = new WiredTigerDB("WT-HOME", { create: true, cache_size: "2MB" });
+  // db2.open();
+  // console.log("WiredTigerMapTable(Disk)", testMap(new WiredTigerMapTable(db2.native, "testMap")));
   gc();
+  console.log(process.memoryUsage().rss / 1024 / 1024);
   await setTimeout(100000);
 }
 

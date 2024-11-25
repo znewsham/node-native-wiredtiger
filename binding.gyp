@@ -34,7 +34,7 @@
       "include_dirs" : [
         "<!(node -e \"require('nan')\")"
         ],
-			'cflags': ['-pthread'],
+			'cflags': ['-pthread', '-O4'],
       "link_settings": {
         "libraries": [
           '-lwiredtiger', '-lz', '-llz4', '-lsnappy', '-lzstd', '-lc', '-lffcall'

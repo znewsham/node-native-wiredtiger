@@ -1,0 +1,25 @@
+{
+  "name": "wiredtiger-cache",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "build": "npx tsc",
+    "build:watch": "npx tsc --watch",
+    "test": "node --test --enable-source-maps lib/tests/index.js",
+    "test:watch": "node --test --watch --enable-source-maps lib/tests/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "gypfile": true,
+  "devDependencies": {
+    "@types/node": "^22.8.1",
+    "nan": "^2.22.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "bson": "^6.9.0"
+  }
+}
