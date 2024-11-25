@@ -4,10 +4,20 @@
   "description": "",
   "main": "index.js",
   "type": "module",
+  "napi": {
+    "name": "wiredtiger-cache",
+    "triples": {}
+  },
   "scripts": {
+    "artifacts": "napi artifacts",
+    "build:napi-release": "napi build --platform --profile=release --js=getModule.cjs --dts=getModule.d.ts",
+    "build:napi-debug": "napi build --platform --profile=release-debug --js=getModule.cjs --dts=getModule.d.ts",
+    "prepublishOnly": "napi prepublish -t npm",
+    "universal": "napi universal",
+    "version": "napi version",
     "install": "node-gyp rebuild",
-    "build": "npx tsc",
-    "build:watch": "npx tsc --watch",
+    "build:tsc": "npx tsc",
+    "build:tsc-watch": "npx tsc --watch",
     "test": "node --test --enable-source-maps lib/tests/index.js",
     "test:watch": "node --test --watch --enable-source-maps lib/tests/index.js"
   },
@@ -15,6 +25,7 @@
   "license": "ISC",
   "gypfile": true,
   "devDependencies": {
+    "@napi-rs/cli": "^2.18.4",
     "@types/node": "^22.8.1",
     "nan": "^2.22.0",
     "typescript": "^5.6.3"
