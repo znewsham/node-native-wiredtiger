@@ -1,16 +1,17 @@
 use std::ffi::CString;
 use std::ptr::null;
 
-use crate::glue::session::InternalWiredTigerSession;
+use crate::glue::session::InternalSession;
 use crate::external::wiredtiger::*;
 
 use super::compound_directional_collator::InternalWiredTigerCompoundDirectionalCollator;
-use super::custom_collator::CustomCollator;
+use super::custom_collator::CustomCollatorTrait;
+use super::custom_extractor::CustomExtractorTrait;
 use super::error::{GlueError, GlueErrorCode};
 use super::multi_key_extractor::InternalWiredTigerMultiKeyExtractor;
 use super::utils::{get_fn, unwrap_string_and_dealloc, unwrap_string_or_null};
 
-pub struct InternalWiredTigerConnection {
+pub struct InternalConnection {
   connection: *mut WT_CONNECTION
 }
 //
@@ -28,7 +29,7 @@ static mut COMPOUND_DIRECTIONAL_COLLATOR: WT_COLLATOR = WT_COLLATOR {
   compare: None
 };
 
-impl InternalWiredTigerConnection {
+impl InternalConnection {
   fn get_connection(&self) -> Result<WT_CONNECTION, GlueError> {
     if self.connection == std::ptr::null_mut() {
       return Err(GlueError::for_glue(GlueErrorCode::UnlikelyNoPtr));
@@ -38,7 +39,7 @@ impl InternalWiredTigerConnection {
     }
   }
 
-  pub fn add_collator(&self, name: String, collator: &mut dyn CustomCollator) -> Result<i32, GlueError> {
+  pub fn add_collator(&self, name: String, collator: &mut dyn CustomCollatorTrait) -> Result<i32, GlueError> {
     let con = self.get_connection()?;
 
     let result = unsafe {
@@ -46,6 +47,21 @@ impl InternalWiredTigerConnection {
         self.connection,
         unwrap_string_and_dealloc(name).as_ptr(),
         collator.get_collator(),
+        null()
+      )
+    };
+
+    Ok(result)
+  }
+
+  pub fn add_extractor(&self, name: String, extractor: &mut dyn CustomExtractorTrait) -> Result<i32, GlueError> {
+    let con = self.get_connection()?;
+
+    let result = unsafe {
+      get_fn(con.add_extractor)?(
+        self.connection,
+        unwrap_string_and_dealloc(name).as_ptr(),
+        extractor.get_extractor(),
         null()
       )
     };
@@ -69,7 +85,7 @@ impl InternalWiredTigerConnection {
       if error != 0 {
         return Err(GlueError::for_wiredtiger(error))
       }
-      let connection = InternalWiredTigerConnection { connection: conn };
+      let connection = InternalConnection { connection: conn };
       (*connection.connection).add_extractor.unwrap()(
         connection.connection,
         unwrap_string_and_dealloc("multikey".to_string()).as_ptr(),
@@ -97,7 +113,7 @@ impl InternalWiredTigerConnection {
     Ok(())
   }
 
-  pub fn open_session(&self, config: Option<String>) -> Result<InternalWiredTigerSession, GlueError> {
+  pub fn open_session(&self, config: Option<String>) -> Result<InternalSession, GlueError> {
     let mut session: *mut WT_SESSION = std::ptr::null_mut();
     let error: std::os::raw::c_int = unsafe { get_fn(self.get_connection()?.open_session)?(
       self.connection,
@@ -108,6 +124,6 @@ impl InternalWiredTigerConnection {
     if error != 0 {
       return Err(GlueError::for_wiredtiger(error));
     }
-    Ok(InternalWiredTigerSession::new(session))
+    Ok(InternalSession::new(session))
   }
 }

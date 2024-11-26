@@ -4,7 +4,7 @@ use std::ffi::{CStr, CString};
 use std::fmt::Display;
 
 use napi::bindgen_prelude::Array;
-use napi::{Env, Error, JsBigInt, JsBuffer, JsNumber, JsUnknown, ValueType};
+use napi::{Env, Error, JsBigInt, JsBoolean, JsBuffer, JsNumber, JsUnknown, ValueType};
 
 use crate::glue::error::*;
 
@@ -51,11 +51,17 @@ pub fn unwrap_or_display_error<R, E: Display>(result: Result<R, E>) -> Result<R,
 }
 
 
-pub fn value_in(value: JsUnknown, format: &Format) -> Result<QueryValue, Error> {
+pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>, Error> {
   let value_type: ValueType = value.get_type()?;
   let mut qv: QueryValue = QueryValue::empty();
   qv.data_type = format.format;
+  if value_type == ValueType::Undefined {
+    return Ok(None);
+  }
   match format.format {
+    FieldFormat::PADDING => {
+      return Ok(None);
+    }
     FieldFormat::CHAR_ARRAY => {
       match value_type {
         ValueType::String => {
@@ -97,6 +103,20 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<QueryValue, Error> 
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
     },
+    FieldFormat::BITFIELD => {
+      match value_type {
+        ValueType::Number => {
+          let casted_value: JsNumber = value.coerce_to_number()?;
+          qv.external_value = ExternalValue::UInt(casted_value.get_uint32()? as u64);
+        },
+        ValueType::Boolean => {
+          let casted_value: JsBoolean = value.coerce_to_bool()?;
+          qv.external_value = ExternalValue::UInt(casted_value.get_value()? as u64);
+        }
+        _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
+      }
+    },
+
     FieldFormat::UINT
     | FieldFormat::UINT2
     | FieldFormat::UBYTE
@@ -170,25 +190,38 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<QueryValue, Error> 
         }
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
-    }
+    },
     _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidFormat, format!("{}", format.format))))
   }
 
 
-  Ok(qv)
+  Ok(Some(qv))
 }
 
-pub fn extract_values(values: Array, formats: &Vec<Format>) -> Result<Vec<QueryValue>, Error> {
+pub fn extract_values(values: Array, formats: &Vec<Format>, include_padding: bool) -> Result<Vec<QueryValue>, Error> {
   let mut converted: Vec<QueryValue> = vec![];
   if values.len() as usize != formats.len() {
     return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidLength, format!("Length {} is invalid for format size {}", values.len(), formats.len()).to_string())));
   }
+  let mut seen_padding = false;
   for i in 0..values.len() {
     let item: Option<JsUnknown> = values.get(i)?;
-    converted.push(value_in(
+    let qv = value_in(
       item.unwrap(),
       formats.get(i as usize).unwrap()
-    )?);
+    )?;
+    if qv.is_some() {
+      converted.push(qv.unwrap());
+    }
+    else if include_padding == true {
+      converted.push(QueryValue::empty());
+    }
+    else if seen_padding == true {
+      return Err(Error::from_reason("Can't have a padding field in the middle of the format"));
+    }
+    else {
+      seen_padding = true;
+    }
   }
 
   return Ok(converted);
@@ -218,12 +251,26 @@ pub fn value_out(env: Env, value: &QueryValue, format: &Format) -> Result<JsUnkn
 
     FieldFormat::UINT
     | FieldFormat::UINT2
+    | FieldFormat::BITFIELD
     | FieldFormat::UBYTE
     | FieldFormat::UHALF => Ok(env.create_uint32(*unwrap_or_error(value.get_uint())? as u32)?.into_unknown()),
 
     FieldFormat::WT_ITEM
     | FieldFormat::WT_UITEM => {
       Ok(env.create_buffer_copy(unwrap_or_error(value.get_byte_array())?)?.into_unknown())
+    },
+
+    FieldFormat::LONG => {
+      Ok(env.create_bigint_from_i64(*unwrap_or_error(value.get_uint())? as i64)?.into_unknown()?)
+    }
+
+    FieldFormat::ULONG
+    | FieldFormat::RECID => {
+      Ok(env.create_bigint_from_u64(*unwrap_or_error(value.get_uint())?)?.into_unknown()?)
+    },
+    FieldFormat::BOOLEAN => {
+      let value = *unwrap_or_error(value.get_uint())?;
+      Ok(env.get_boolean(value == 1)?.into_unknown())
     },
 
     FieldFormat::WT_ITEM_BIGINT => {
@@ -257,6 +304,14 @@ pub fn value_out(env: Env, value: &QueryValue, format: &Format) -> Result<JsUnkn
     }
     _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value.data_type))))
   }
+}
+
+pub fn check_formats(parsed_formats: &Vec<Format>, default_formats: &Vec<Format>) -> Result<(), Error> {
+  if parsed_formats.len() != default_formats.len() {
+    let err = Error::from_reason(format!("Format mismatch provided:{} != {}", parsed_formats.len(), default_formats.len()));
+    return Err(err);
+  }
+  Ok(())
 }
 
 pub fn populate_values(env: Env, values: Vec<QueryValue>, formats: &Vec<Format>) -> Result<Array, Error> {
@@ -309,11 +364,12 @@ pub fn parse_index_specs(index_specs: Vec<IndexSpec>, index_formats: &HashMap<St
                 formats = format;
               },
               None => {
-                return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::AccessEmptyBox, format!("Couldn't find the format for index: {}", index_name))));
+                formats = table_key_format;
+                // return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::AccessEmptyBox, format!("Couldn't find the format for index: {}", index_name))));
               }
             }
           }
-          Some(extract_values(values, formats)?)
+          Some(extract_values(values, formats, false)?)
         },
         None => None
       }

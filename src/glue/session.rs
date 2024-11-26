@@ -1,17 +1,17 @@
 
 use crate::external::wiredtiger::*;
 
-use super::cursor::InternalWiredTigerCursor;
+use super::cursor::InternalCursor;
 use super::utils::{get_fn, unwrap_string_and_dealloc, unwrap_string_or_null};
 use super::error::*;
 
-pub struct InternalWiredTigerSession {
+pub struct InternalSession {
   session: *mut WT_SESSION
 }
 
-impl InternalWiredTigerSession {
+impl InternalSession {
   pub fn new(session: *mut WT_SESSION) -> Self {
-    InternalWiredTigerSession { session }
+    InternalSession { session }
   }
 
   pub fn get_session_ptr(&self) -> *mut WT_SESSION {
@@ -56,7 +56,7 @@ impl InternalWiredTigerSession {
     Err(GlueError::for_wiredtiger( result))
   }
 
-  pub fn open_cursor(&self, cursor_spec: String, config: Option<String>) -> Result<InternalWiredTigerCursor, GlueError> {
+  pub fn open_cursor(&self, cursor_spec: String, config: Option<String>) -> Result<InternalCursor, GlueError> {
     let mut cursor: *mut WT_CURSOR = std::ptr::null_mut();
     let error: std::os::raw::c_int = unsafe { get_fn(self.get_session()?.open_cursor)?(
       self.session,
@@ -68,7 +68,7 @@ impl InternalWiredTigerSession {
     if error != 0 {
       return Err(GlueError::for_wiredtiger(error));
     }
-    InternalWiredTigerCursor::new(cursor)
+    InternalCursor::new(cursor)
   }
 
   pub fn begin_transaction(&self, config: Option<String>) -> Result<(), GlueError> {
@@ -127,7 +127,7 @@ impl InternalWiredTigerSession {
     Err(GlueError::for_wiredtiger( result))
   }
 
-  pub fn join(&self, join_cursor: &InternalWiredTigerCursor, ref_cursor: &InternalWiredTigerCursor, config: Option<String>) -> Result<(), GlueError> {
+  pub fn join(&self, join_cursor: &InternalCursor, ref_cursor: &InternalCursor, config: Option<String>) -> Result<(), GlueError> {
     let result = unsafe {
       get_fn(self.get_session()?.join)?(
         self.session,

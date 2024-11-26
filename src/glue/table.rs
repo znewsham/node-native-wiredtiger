@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::ffi::CString;
 
 
-use super::find_cursor::InternalWiredTigerFindCursor;
+use super::cursor_trait::InternalCursorTrait;
+use super::find_cursor::InternalFindCursor;
+use super::multi_cursor::MultiCursor;
 use super::query_value::{ExternalValue, Format, InternalDocument, InternalIndexSpec, InternalValue, QueryValue};
-use super::session::InternalWiredTigerSession;
+use super::session::InternalSession;
 use super::utils::extract_formats_from_config;
 use super::error::*;
 
-pub struct InternalWiredTigerTable {
+pub struct InternalTable {
   table_name: String,
   config: String,
   spec_name: String,
@@ -21,10 +23,10 @@ pub struct InternalWiredTigerTable {
   pub index_formats: HashMap<String, Vec<Format>>
 }
 
-impl InternalWiredTigerTable {
+impl InternalTable {
   pub fn new(table_name: String, config: String) -> Self {
     let spec_name = format!("table:{}", table_name);
-    return InternalWiredTigerTable {
+    return InternalTable {
       table_name,
       config,
       spec_name,
@@ -42,7 +44,11 @@ impl InternalWiredTigerTable {
     return extract_formats_from_config(self.config.to_string(), &mut self.key_formats, &mut self.value_formats);
   }
 
-  fn init_table(&mut self, session: &InternalWiredTigerSession) -> Result<(), GlueError> {
+  pub fn get_name(&self) -> &String {
+    return &self.table_name;
+  }
+
+  fn init_table(&mut self, session: &InternalSession) -> Result<(), GlueError> {
     if self.is_initted {
       return Ok(());
     }
@@ -71,21 +77,21 @@ impl InternalWiredTigerTable {
     Ok(&self.value_formats)
   }
 
-  pub fn insert_many(&mut self, session: &InternalWiredTigerSession, documents: &mut Vec<InternalDocument>) -> Result<i32, GlueError> {
+  pub fn insert_many(&mut self, session: &InternalSession, documents: &mut Vec<InternalDocument>) -> Result<i32, GlueError> {
     self.init_table(session)?;
     let len = documents.len();
-    let cursor = session.open_cursor(self.spec_name.to_string(), None)?;
+    let mut cursor = session.open_cursor(self.spec_name.to_string(), None)?;
     for document in documents {
       cursor.set_key(&mut document.key)?;
       cursor.set_value(&mut document.value)?;
       cursor.insert()?;
     }
-    cursor.close()?;
+    (&mut cursor).close()?;
     Ok(len as i32)
   }
 
   // this function ensures we've loaded all the indexes created outside of create_index (just in case)
-  pub fn ensure_index_formats(&mut self, session: &InternalWiredTigerSession, index_uris: &Vec<String>) -> Result<(), GlueError> {
+  pub fn ensure_index_formats(&mut self, session: &InternalSession, index_uris: &Vec<String>) -> Result<(), GlueError> {
     let metadata_cursor = session.open_cursor("metadata:create".to_string(), None)?;
     let mut qvs:Vec<QueryValue> = Vec::with_capacity(1);
     qvs.push(QueryValue::empty());
@@ -110,7 +116,8 @@ impl InternalWiredTigerTable {
     Ok(())
   }
 
-  pub fn create_index(&mut self, session: &InternalWiredTigerSession, index_name: String, config: String) -> Result<(), GlueError> {
+  pub fn create_index(&mut self, session: &InternalSession, index_name: String, config: String) -> Result<(), GlueError> {
+    self.init_table(&session)?;
     session.create(format!("index:{}:{}", self.table_name, index_name), Some(config.clone()))?;
 
     let mut key_formats:Vec<Format> = Vec::new();
@@ -122,7 +129,63 @@ impl InternalWiredTigerTable {
     Ok(())
   }
 
-  pub fn find(&self, session: InternalWiredTigerSession, index_specs: Vec<InternalIndexSpec>) -> Result<InternalWiredTigerFindCursor, GlueError> {
-    return InternalWiredTigerFindCursor::new(session, self.table_name.clone(), index_specs);
+  pub fn find(
+    &self,
+    session: &InternalSession,
+    index_specs: Vec<InternalIndexSpec>,
+    columns_joined: Option<String>
+  ) -> Result<InternalFindCursor, GlueError> {
+    let mut cursor = InternalFindCursor::new(self.table_name.clone(), index_specs, columns_joined)?;
+    cursor.init(session)?;
+    return Ok(cursor);
+  }
+
+  pub fn delete_many(&self, session: InternalSession, index_specs: Vec<InternalIndexSpec>) -> Result<i32, GlueError> {
+    let mut cursor = MultiCursor::new(self.table_name.clone(), index_specs, Some("()".to_string()))?;
+    cursor.init(&session)?;
+    let delete_cursor = session.open_cursor(format!("table:{}", self.table_name), None)?;
+    let mut count = 0;
+    while cursor.next()? {
+      let mut key = cursor.get_key()?;
+      for k in key.iter_mut() {
+        k.external_value = ExternalValue::ReferenceInternal();
+      }
+      delete_cursor.set_key(&mut key)?;
+      delete_cursor.remove()?;
+      count += 1;
+    }
+
+    return Ok(count);
+  }
+
+  pub fn update_many(&mut self, session: InternalSession, index_specs: Vec<InternalIndexSpec>, value: &mut Vec<QueryValue>) -> Result<i32, GlueError> {
+    self.init_table(&session)?;
+    let mut cursor = MultiCursor::new(self.table_name.clone(), index_specs, None)?;
+    cursor.init(&session)?;
+    let mut update_cursor = session.open_cursor(format!("table:{}", self.table_name), None)?;
+    let mut count = 0;
+    while cursor.next()? {
+      let mut key = cursor.get_key()?;
+      let existing = cursor.get_value()?;
+      for k in key.iter_mut() {
+        k.external_value = ExternalValue::ReferenceInternal();
+      }
+      update_cursor.set_key(&mut key)?;
+
+      for i in  0..value.len() {
+        let value_in = value.get_mut(i).unwrap();
+        let value_existing = existing.get(i).unwrap();
+        if value_in.data_type == 'x' {
+          value_in.internal_value = value_existing.internal_value.clone();
+          value_in.external_value = ExternalValue::ReferenceInternal();
+        }
+      }
+      update_cursor.set_value(value)?;
+      update_cursor.update()?;
+      count += 1;
+    }
+    update_cursor.close()?;
+    cursor.close()?;
+    Ok(count)
   }
 }

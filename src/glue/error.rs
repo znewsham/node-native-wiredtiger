@@ -51,6 +51,7 @@ fn glue_error_strerror(error: &GlueErrorCode, extra: &String) -> String {
   return match error {
     GlueErrorCode::NoError => "Should not have got here - no error".to_string(),
     GlueErrorCode::ImpossibleNoFn => "Impossible - there's no function available".to_string(),
+    GlueErrorCode::ImpossibleNotImplemented => "Impossible - Something wasn't implemented".to_string(),
     GlueErrorCode::UnlikelyNoPtr => "Unlikely - but there's no pointer".to_string(),
     GlueErrorCode::UnlikelyNoValue => "Unlikely - but there's no value where we tried to extract something".to_string(),
     GlueErrorCode::UnlikelyNoRun => "Unlikely - but the function never populated the return value ptr".to_string(),
@@ -76,6 +77,7 @@ pub enum GlueErrorCode {
   UnlikelyNoPtr = 1,
   UnlikelyNoValue,
   ImpossibleNoFn,
+  ImpossibleNotImplemented,
   InvalidFormat,
   InvalidDataForFormat,
   InvalidLength,

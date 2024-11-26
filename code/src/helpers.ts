@@ -1,5 +1,8 @@
 
-export function configToString(config: object | string[]): string {
+export function configToString(config: string | object | string[]): string {
+  if (typeof config === "string") {
+    return config;
+  }
   if (Array.isArray(config)) {
     // NOTE: array of arrays not supported
     return config.map(sC => typeof sC === "object" ? `${configToString(sC)}` : sC).join(",");

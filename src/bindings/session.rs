@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::{Mutex, MutexGuard, OnceLock}};
 
-use napi::{bindgen_prelude::This, Env, Error, JsObject, Ref};
+use napi::{bindgen_prelude::{FromNapiValue, This, ToNapiValue}, Env, Error, JsObject, Ref};
 
-use crate::{external::wiredtiger::WT_SESSION, glue::session::InternalWiredTigerSession};
-use super::{connection::WiredTigerConnection, cursor::WiredTigerCursor, utils::unwrap_or_error};
+use crate::{external::wiredtiger::WT_SESSION, glue::session::InternalSession};
+use super::{connection::Connection, cursor::Cursor, utils::unwrap_or_error};
 
 
 fn get_global_hashmap() -> MutexGuard<'static, HashMap<u64, Ref<()>>> {
@@ -14,23 +14,43 @@ fn get_global_hashmap() -> MutexGuard<'static, HashMap<u64, Ref<()>>> {
 }
 
 #[napi]
-pub struct WiredTigerSession {
-  session: InternalWiredTigerSession
+pub struct Session {
+  session: InternalSession
+}
+
+impl Drop for Session {
+  fn drop(&mut self) {
+    let addr = self.session.get_session_ptr() as u64;
+    get_global_hashmap().remove(&addr);
+  }
 }
 
 #[napi]
-impl WiredTigerSession {
+impl Session {
 
   #[napi(constructor)]
-  pub fn new(env: Env, this: This<JsObject>, conn: &WiredTigerConnection, config: Option<String>) -> Result<WiredTigerSession, Error> {
-    let session: InternalWiredTigerSession = conn.open_internal_session(config)?;
+  pub fn new(env: Env, this: This<JsObject>, conn: &Connection, config: Option<String>) -> Result<Session, Error> {
+    let session: InternalSession = conn.open_internal_session(config)?;
     get_global_hashmap().insert(session.get_session_ptr() as u64, env.create_reference(this)?);
-    return Ok(WiredTigerSession { session });
+    return Ok(Session { session });
   }
-  pub fn new_internal(env: Env, this: This<JsObject>, session: InternalWiredTigerSession) -> Result<WiredTigerSession, Error> {
-    get_global_hashmap().insert(session.get_session_ptr() as u64, env.create_reference(this)?);
-    let ret = WiredTigerSession { session };
-    return Ok(ret);
+
+  pub fn new_internal(env: Env, session: InternalSession) -> Result<JsObject, Error> {
+    let session_ptr = session.get_session_ptr();
+    let wt = Session { session };
+    let ret = unsafe { Session::to_napi_value(env.raw(), wt) };
+    let this = unsafe { JsObject::from_napi_value(env.raw(), ret.unwrap()) }?;
+    get_global_hashmap().insert(session_ptr as u64, env.create_reference(&this)?);
+
+    return Ok(this);
+  }
+
+  pub fn get_internal_session(&self) -> &InternalSession {
+    return &self.session;
+  }
+
+  pub fn get_session_ptr(&self) -> *mut WT_SESSION {
+    return self.session.get_session_ptr();
   }
 
   pub fn get_this(env: Env, session: *mut WT_SESSION) -> Result<Option<This<JsObject>>, Error> {
@@ -54,8 +74,8 @@ impl WiredTigerSession {
   }
 
   #[napi]
-  pub fn open_cursor(&self, cursor_spec: String, config: Option<String>) -> Result<WiredTigerCursor, Error> {
-    Ok(WiredTigerCursor::new(unwrap_or_error(self.session.open_cursor(cursor_spec, config))?))
+  pub fn open_cursor(&self, cursor_spec: String, config: Option<String>) -> Result<Cursor, Error> {
+    Ok(Cursor::new(unwrap_or_error(self.session.open_cursor(cursor_spec, config))?))
   }
 
   #[napi]
@@ -80,7 +100,7 @@ impl WiredTigerSession {
 
 
   #[napi]
-  pub fn join(&self, join_cursor: &WiredTigerCursor, ref_cursor: &WiredTigerCursor, config: Option<String>) -> Result<(), Error> {
+  pub fn join(&self, join_cursor: &Cursor, ref_cursor: &Cursor, config: Option<String>) -> Result<(), Error> {
     return unwrap_or_error(self.session.join(join_cursor.get_internal_cursor(), ref_cursor.get_internal_cursor(), config));
   }
 }

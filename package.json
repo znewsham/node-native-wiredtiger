@@ -8,10 +8,13 @@
     "name": "wiredtiger-cache",
     "triples": {}
   },
+  "imports": {
+    "#getModule": "./getModule.cjs"
+  },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build:napi-release": "napi build --platform --profile=release --js=getModule.cjs --dts=getModule.d.ts",
-    "build:napi-debug": "napi build --platform --profile=release-debug --js=getModule.cjs --dts=getModule.d.ts",
+    "build:napi-release": "napi build --platform --profile=release --js=getModule.cjs --dts=code/src/getModule.d.ts",
+    "build:napi-debug": "napi build --platform --profile=release-debug --js=getModule.cjs --dts=code/src/getModule.d.ts",
     "prepublishOnly": "napi prepublish -t npm",
     "universal": "napi universal",
     "version": "napi version",

@@ -123,11 +123,31 @@ pub fn char_ptr_of_length_to_string(char_ptr: *const i8, length: u64) -> Result<
 }
 
 pub fn char_ptr_to_string(char_ptr: *const i8) -> Result<String, GlueError> {
+  if char_ptr == null() {
+    return Ok("".to_string());
+  }
   let result = unsafe { CStr::from_ptr(char_ptr) }.to_str();
   match result {
     Ok(str) => Ok(str.to_string()),
     Err(_err) => Err(GlueError::for_glue(GlueErrorCode::NoString))
   }
+}
+
+
+pub fn formats_to_string(formats: &Vec<Format>) -> String {
+  let mut str = String::with_capacity(formats.len());
+  for format in formats {
+    if format.size != 0 {
+      str.push_str(format!("{}", format.size).as_str());
+    }
+    if field_is_wt_item(format.format) {
+      str.push('u');
+    }
+    else {
+      str.push(format.format);
+    }
+  }
+  return str;
 }
 
 pub fn parse_format(format: String, formats: &mut Vec<Format>) -> Result<(), GlueError> {

@@ -12,6 +12,7 @@
     "strictFunctionTypes": true,
     "sourceMap": true,
     "allowJs": true,
+    "rootDir": ".",
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "maxNodeModuleJsDepth": 2

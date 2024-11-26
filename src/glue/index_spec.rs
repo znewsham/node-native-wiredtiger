@@ -1,13 +1,13 @@
 use crate::external::wiredtiger::WT_NOTFOUND;
 
-use super::{cursor::InternalWiredTigerCursor, error::{ErrorDomain, GlueError}, query_value::{InternalIndexSpec, Operation}, session::InternalWiredTigerSession};
+use super::{cursor::InternalCursor, cursor_trait::InternalCursorTrait, error::{ErrorDomain, GlueError}, query_value::{InternalIndexSpec, Operation}, session::InternalSession};
 
 fn cursor_for_index_spec(
-  session: &InternalWiredTigerSession,
+  session: &InternalSession,
   table_cursor_uri: &str,
   join_cursor_uri: &str,
   index_spec: &InternalIndexSpec
-) -> Result<InternalWiredTigerCursor, GlueError> {
+) -> Result<InternalCursor, GlueError> {
   let index_name = index_spec.index_name.clone();
   if index_spec.operation == Operation::INDEX {
     let cursor = session.open_cursor(index_name.unwrap(), Some("".to_string()))?;
@@ -86,12 +86,12 @@ fn cursor_for_index_spec(
 }
 
 pub fn cursor_for_index_specs(
-  session: &InternalWiredTigerSession,
+  session: &InternalSession,
   table_cursor_uri: &str,
   join_cursor_uri: &str,
   index_specs: &Vec<InternalIndexSpec>,
   disjunction: bool
-) -> Result<InternalWiredTigerCursor, GlueError> {
+) -> Result<InternalCursor, GlueError> {
   if index_specs.len() == 0 {
     return session.open_cursor(table_cursor_uri.to_string(), None);
   }

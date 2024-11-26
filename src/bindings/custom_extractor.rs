@@ -1,13 +1,15 @@
 use std::ffi::CStr;
 
-use napi::bindgen_prelude::{Array, This};
+use napi::bindgen_prelude::This;
 use napi::{noop_finalize, Either, Env, Error, JsFunction, JsObject, Ref};
-use crate::external::wiredtiger::{wiredtiger_lex_compare, WT_COLLATOR, WT_CONFIG_ITEM, WT_ITEM, WT_SESSION};
-use crate::glue::custom_collator::CustomCollatorTrait;
-use crate::glue::error::GlueError;
+use crate::external::wiredtiger::{WT_CONFIG_ITEM, WT_CURSOR, WT_EXTRACTOR, WT_ITEM, WT_SESSION};
+use crate::glue::cursor::InternalCursor;
+use crate::glue::custom_extractor::CustomExtractorTrait;
+use crate::glue::error::{GlueError, GlueErrorCode};
 use crate::glue::session::InternalSession;
 use crate::glue::utils::char_ptr_of_length_to_string;
 
+use super::result_cursor::ResultCursor;
 use super::session::Session;
 use super::utils::{unwrap_or_displayable_error, unwrap_or_error};
 
@@ -16,6 +18,12 @@ fn unwrap_or_either_a<T>(res: Result<T, Error>) -> Result<T, Either<Error, GlueE
   match res {
     Ok(t) => Ok(t),
     Err(err) => Err(Either::A(err))
+  }
+}
+fn unwrap_or_either_b<T>(res: Result<T, GlueError>) -> Result<T, Either<Error, GlueError>> {
+  match res {
+    Ok(t) => Ok(t),
+    Err(err) => Err(Either::B(err))
   }
 }
 
@@ -33,34 +41,27 @@ fn unwrap_or_either_a<T>(res: Result<T, Error>) -> Result<T, Either<Error, GlueE
 // }
 
 #[napi]
-pub enum Comparison {
-  LessThan=-1,
-  Equal=0,
-  GreaterThan=1
-}
-
-#[napi]
-pub struct CustomCollator {
+pub struct CustomExtractor {
   // if you change the order here - make sure the static members still work
   env: Env,
-  compare_fn: Option<Ref<()>>,
+  extract_fn: Option<Ref<()>>,
   customize_fn: Option<Ref<()>>,
   terminate_fn: Option<Ref<()>>,
-  collator: WT_COLLATOR,
+  extractor: WT_EXTRACTOR,
   this: Ref<()>
 }
 
 
-impl CustomCollatorTrait for CustomCollator {
-  fn get_collator(&mut self) -> *mut WT_COLLATOR {
-    return &raw mut self.collator;
+impl CustomExtractorTrait for CustomExtractor {
+  fn get_extractor(&mut self) -> *mut WT_EXTRACTOR {
+    return &raw mut self.extractor;
   }
 }
 
-impl Drop for CustomCollator {
+impl Drop for CustomExtractor {
   fn drop(&mut self) {
-    if self.compare_fn.is_some() {
-      self.compare_fn.as_mut().unwrap().unref(self.env).unwrap();
+    if self.extract_fn.is_some() {
+      self.extract_fn.as_mut().unwrap().unref(self.env).unwrap();
     }
     if self.customize_fn.is_some() {
       self.customize_fn.as_mut().unwrap().unref(self.env).unwrap();
@@ -73,27 +74,27 @@ impl Drop for CustomCollator {
 }
 
 #[napi]
-impl CustomCollator {
+impl CustomExtractor {
   #[napi(constructor)]
   pub fn new(
     env: Env,
     this: This<JsObject>,
-    #[napi(ts_arg_type="(session: Session, key1: Buffer, key2: Buffer) => number")]
-    compare: Option<JsFunction>,
+    #[napi(ts_arg_type="(session: Session, key: Buffer, value: Buffer, resultCursor: ResultCursor) => number")]
+    extract: Option<JsFunction>,
     #[napi(ts_arg_type="(session: Session, uri: string, config: string) => number")]
     customize: Option<JsFunction>,
     #[napi(ts_arg_type="(session: Session) => number")]
     terminate: Option<JsFunction>
   ) -> Result<Self, Error> {
-    let ret = CustomCollator {
+    let ret = CustomExtractor {
       // if you change the order here - make sure the static members still work
       env,
-      collator: WT_COLLATOR {
-        compare: if compare.is_some() { Some(CustomCollator::static_compare) } else { None },
-        customize: if customize.is_some() { Some(CustomCollator::static_customize) } else { None },
-        terminate: if terminate.is_some() { Some(CustomCollator::static_terminate) } else { None },
+      extractor: WT_EXTRACTOR {
+        extract: if extract.is_some() { Some(CustomExtractor::static_extract) } else { None },
+        customize: if customize.is_some() { Some(CustomExtractor::static_customize) } else { None },
+        terminate: Some(CustomExtractor::static_terminate),
       },
-      compare_fn: if compare.is_some() { Some(env.create_reference(compare.unwrap())?) } else { None },
+      extract_fn: if extract.is_some() { Some(env.create_reference(extract.unwrap())?) } else { None },
       customize_fn: if customize.is_some() { Some(env.create_reference(customize.unwrap())?) } else { None },
       terminate_fn: if terminate.is_some() { Some(env.create_reference(terminate.unwrap())?) } else { None },
       this: env.create_reference(this)?
@@ -102,49 +103,55 @@ impl CustomCollator {
     return Ok(ret)
   }
 
-  fn compare(
+  fn extract(
     &self,
     session: *mut WT_SESSION,
-    v1: *const WT_ITEM,
-    v2: *const WT_ITEM,
-  ) -> Result<i32, Either<Error, GlueError>> {
-    if self.compare_fn.is_some() {
-      let compare_fn: JsFunction = unwrap_or_either_a(self.env.get_reference_value(&self.compare_fn.as_ref().unwrap()))?;
+    key: *const WT_ITEM,
+    value: *const WT_ITEM,
+    result_cursor_ptr: *mut WT_CURSOR
+  ) -> Result<(), Either<Error, GlueError>> {
+    if self.extract_fn.is_some() {
+      let mut cursor_this: Option<JsObject> = unwrap_or_either_a(ResultCursor::get_this(self.env, result_cursor_ptr))?;
+      if cursor_this.is_none() {
+        cursor_this = Some(unwrap_or_either_a(ResultCursor::new_internal(self.env, unwrap_or_either_b(InternalCursor::new(result_cursor_ptr))?))?);
+      }
+      let extract_fn: JsFunction = unwrap_or_either_a(self.env.get_reference_value(&self.extract_fn.as_ref().unwrap()))?;
       let this: This<JsObject> = unwrap_or_either_a(self.env.get_reference_value(&self.this))?;
       let mut session_this = unwrap_or_either_a(Session::get_this(self.env, session))?;
+
       if session_this.is_none() {
         session_this = Some(unwrap_or_either_a(Session::new_internal(self.env, InternalSession::new(session)))?);
       }
-      let b1_buffer = unwrap_or_either_a(unsafe { self.env.create_buffer_with_borrowed_data((*v1).data as *mut u8, (*v1).size as usize, 0, noop_finalize)})?;
-      let b2_buffer = unwrap_or_either_a(unsafe { self.env.create_buffer_with_borrowed_data((*v2).data as *mut u8, (*v2).size as usize, 0, noop_finalize)})?;
+      // let cursor_this = WiredTigerCursor::get_this(self.env, session);
+      let key_buffer = unwrap_or_either_a(unsafe { self.env.create_buffer_with_borrowed_data((*key).data as *mut u8, (*key).size as usize, 0, noop_finalize)})?;
+      let value_buffer = unwrap_or_either_a(unsafe { self.env.create_buffer_with_borrowed_data((*value).data as *mut u8, (*value).size as usize, 0, noop_finalize)})?;
 
-      let result: Array = unwrap_or_either_a(compare_fn.apply3(
+      let result: Option<i32> = unwrap_or_either_a(extract_fn.apply4(
         this,
         session_this,
-        b1_buffer.into_raw(),
-        b2_buffer.into_raw()
+        key_buffer.into_raw(),
+        value_buffer.into_raw(),
+        cursor_this
       ))?;
-      if result.len() != 2 {
-        return Err(Either::A(Error::from_reason("Must return a tuple of [err code|0, Comparison]")));
+      if result.is_some() {
+        let err = result.unwrap();
+        if err != 0 {
+          return Err(Either::B(GlueError::for_wiredtiger(err)))
+        }
       }
-
-      let err: i32 = unwrap_or_either_a(result.get(0))?.unwrap();
-      if err != 0 {
-        return Err(Either::B(GlueError::for_wiredtiger(err)))
-      }
-      return Ok(unwrap_or_either_a(result.get(1))?.unwrap());
+      return Ok(());
     }
-    return Ok(unsafe { wiredtiger_lex_compare(v1, v2) });
+    return Err(Either::B(GlueError::for_glue_with_extra(GlueErrorCode::MissingRequiredConfig, "Missing extract function".to_string())));
   }
 
-  unsafe extern "C" fn raw_compare(
+  unsafe extern "C" fn raw_extract(
     &self,
     session: *mut WT_SESSION,
-    v1: *const WT_ITEM,
-    v2: *const WT_ITEM,
-    compare: *mut i32
+    key: *const WT_ITEM,
+    value: *const WT_ITEM,
+    result_cursor: *mut WT_CURSOR
   ) -> i32 {
-    let res = self.compare(session, v1, v2);
+    let res = self.extract(session, key, value, result_cursor);
     match res {
       Err(err) => {
         match err {
@@ -155,8 +162,7 @@ impl CustomCollator {
           Either::B(err) => err.wiredtiger_error
         }
       },
-      Ok(comparison) => {
-        *compare = comparison;
+      Ok(_comparison) => {
         0
       }
     }
@@ -167,7 +173,7 @@ impl CustomCollator {
     session: *mut WT_SESSION,
     uri: *const ::std::os::raw::c_char,
     appcfg: *mut WT_CONFIG_ITEM,
-    customp: *mut *mut WT_COLLATOR
+    customp: *mut *mut WT_EXTRACTOR
   ) -> Result<i32, Error> {
     if self.customize_fn.is_some() {
       let customize_fn: JsFunction = self.env.get_reference_value(&self.customize_fn.as_ref().unwrap())?;
@@ -175,9 +181,10 @@ impl CustomCollator {
       let mut session_this = Session::get_this(self.env, session)?;
 
       if session_this.is_none() {
-        session_this = Some(Session::new_internal(self.env, InternalSession::new(session))?);
+        let temp_this = Session::new_internal(self.env, InternalSession::new(session))?;
+        session_this = Some(temp_this);
       }
-      let either: Either<i32, &mut CustomCollator> = customize_fn.apply3(
+      let either: Either<i32, &mut CustomExtractor> = customize_fn.apply3(
         this,
         session_this,
         unwrap_or_displayable_error(unsafe {CStr::from_ptr(uri) }.to_str())?.to_string(),
@@ -188,7 +195,7 @@ impl CustomCollator {
           return Ok(err);
         },
         Either::B(customized) => {
-          unsafe { *customp = &raw mut customized.collator };
+          unsafe { *customp = &raw mut customized.extractor };
           return Ok(0);
         }
       }
@@ -203,7 +210,7 @@ impl CustomCollator {
     session: *mut WT_SESSION,
     uri: *const ::std::os::raw::c_char,
     appcfg: *mut WT_CONFIG_ITEM,
-    customp: *mut *mut WT_COLLATOR
+    customp: *mut *mut WT_EXTRACTOR
   ) -> i32 {
     let res = self.customize(session, uri, appcfg, customp);
     match res {
@@ -224,7 +231,8 @@ impl CustomCollator {
         let this: This<JsObject> = self.env.get_reference_value(&self.this)?;
         let mut session_this = Session::get_this(self.env, session)?;
         if session_this.is_none() {
-          session_this = Some(Session::new_internal(self.env, InternalSession::new(session))?);
+          let temp_this = Session::new_internal(self.env, InternalSession::new(session))?;
+          session_this = Some(temp_this);
         }
         let res: Result<i32, Error> = terminate_fn.apply1(
           this,
@@ -253,43 +261,43 @@ impl CustomCollator {
   }
 
 
-  unsafe extern "C" fn static_compare(
-    collator: *mut WT_COLLATOR,
+  unsafe extern "C" fn static_extract(
+    extractor: *mut WT_EXTRACTOR,
     session: *mut WT_SESSION,
-    v1: *const WT_ITEM,
-    v2: *const WT_ITEM,
-    compare: *mut i32
+    key: *const WT_ITEM,
+    value: *const WT_ITEM,
+    result_cursor: *mut WT_CURSOR
   ) -> i32 {
-    let diff = (&raw const (*(collator as *mut CustomCollator)).collator as usize - collator as usize) as isize;
-    let real_collator: *mut CustomCollator = unsafe { (collator as *mut i8).offset(-diff) } as  *mut CustomCollator;
+    let diff = (&raw const (*(extractor as *mut CustomExtractor)).extractor as usize - extractor as usize) as isize;
+    let real_extractor: *mut CustomExtractor = unsafe { (extractor as *mut i8).offset(-diff) } as  *mut CustomExtractor;
 
-    return (*real_collator).raw_compare(session, v1, v2, compare);
+    return (*real_extractor).raw_extract(session, key, value, result_cursor);
   }
 
 
   pub unsafe extern "C" fn static_customize(
-    collator: *mut WT_COLLATOR,
+    extractor: *mut WT_EXTRACTOR,
     session: *mut WT_SESSION,
     uri: *const ::std::os::raw::c_char,
     appcfg: *mut WT_CONFIG_ITEM,
-    customp: *mut *mut WT_COLLATOR
+    customp: *mut *mut WT_EXTRACTOR
   ) -> i32 {
-    let diff = (&raw const (*(collator as *mut CustomCollator)).collator as usize - collator as usize) as isize;
-    let real_collator: *mut CustomCollator = unsafe { (collator as *mut i8).offset(-diff) } as  *mut CustomCollator;
+    let diff = (&raw const (*(extractor as *mut CustomExtractor)).extractor as usize - extractor as usize) as isize;
+    let real_extractor: *mut CustomExtractor = unsafe { (extractor as *mut i8).offset(-diff) } as  *mut CustomExtractor;
 
-    return (*real_collator).raw_customize(session, uri, appcfg, customp);
+    return (*real_extractor).raw_customize(session, uri, appcfg, customp);
   }
 
 
 
   unsafe extern "C" fn static_terminate(
-    collator: *mut WT_COLLATOR,
+    extractor: *mut WT_EXTRACTOR,
     session: *mut WT_SESSION
   ) -> i32 {
-    let diff = (&raw const (*(collator as *mut CustomCollator)).collator as usize - collator as usize) as isize;
-    let real_collator: *mut CustomCollator = unsafe { (collator as *mut i8).offset(-diff) } as  *mut CustomCollator;
+    let diff = (&raw const (*(extractor as *mut CustomExtractor)).extractor as usize - extractor as usize) as isize;
+    let real_extractor: *mut CustomExtractor = unsafe { (extractor as *mut i8).offset(-diff) } as  *mut CustomExtractor;
 
-    return (*real_collator).raw_terminate(session);
+    return (*real_extractor).raw_terminate(session);
   }
 }
 

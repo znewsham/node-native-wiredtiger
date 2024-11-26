@@ -2,41 +2,39 @@ import { makeid } from "../tests/raw/utils.js";
 import { Collection } from "./collection.js";
 import { RemainingSymbol, schema } from "./collectionSchema.js";
 import { WiredTigerDB } from "./db.js";
-import { CustomCollator, CustomExtractor, wiredTigerStructUnpack } from "./getModule.js";
-import { configToString } from "./helpers.js";
-import { CreateTypeAndName, Operation, StringKeysOfT, WiredTigerCursor, WiredTigerSession } from "./types.js";
+import { Session, Operation } from "./getModule.js";
 
 
 let db = new WiredTigerDB("WT-HOME", { in_memory: true, create: true, statistics: ["all"] });
 db.open();
-db.native.addExtractor(
-  "TEST",
-  new CustomExtractor(
-    () => {
-      console.log("HERE1");
-    },
-    (session: WiredTigerSession, uri: string, appcfg: string) => {
-      console.log(uri, appcfg);
-      return new CustomExtractor(
-        (session: WiredTigerSession, key: Buffer, value: Buffer, cursor: WiredTigerCursor) => {
-          try {
-            const docValues = wiredTigerStructUnpack(session, value, "Siu");
-            cursor.setKey(docValues[2]);
-            cursor.insert();
-          }
-          catch (e: any) {
-            if (e.message.endsWith("item not found")) {
-              return;
-            }
-            console.log(e);
-            throw e;
-          }
-        })
-      },
-    () => {console.log("HERE2");}
-  ),
-  ""
-);
+// db.native.addExtractor(
+//   "TEST",
+//   new CustomExtractor(
+//     () => {
+//       console.log("HERE1");
+//     },
+//     (session: WiredTigerSession, uri: string, appcfg: string) => {
+//       console.log(uri, appcfg);
+//       return new CustomExtractor(
+//         (session: WiredTigerSession, key: Buffer, value: Buffer, cursor: WiredTigerCursor) => {
+//           try {
+//             const docValues = wiredTigerStructUnpack(session, value, "Siu");
+//             cursor.setKey(docValues[2]);
+//             cursor.insert();
+//           }
+//           catch (e: any) {
+//             if (e.message.endsWith("item not found")) {
+//               return;
+//             }
+//             console.log(e);
+//             throw e;
+//           }
+//         })
+//       },
+//     () => {console.log("HERE2");}
+//   ),
+//   ""
+// );
 
 // db.native.addCollator(
 //   "TEST",
@@ -191,7 +189,7 @@ col.insertOne({
 });
 console.log("Finished insert");
 
-let session = col.db.openSession();
+let session = new Session(col.db.native);
 let realCursor = session.openCursor("file:Hello_testCompound.wti", null);
 while (realCursor.next()) {
   console.log(realCursor.getKey("SSS")/*, realCursor.getValue()*/);
@@ -245,12 +243,12 @@ console.log("Finished file read");
 let cursor = col.find([
   {
     operation: Operation.AND,
-    conditions: [
-      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
-      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    subConditions: [
+      { index: "index:Hello:ngrams5", queryValues: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", queryValues: ["tesu"], operation: Operation.LT }
     ]
   }
-], { columns: ["doubleThing"] });
+], { /* TODO: columns: ["doubleThing"] */ });
 console.log(cursor.toArray());
 cursor.close();
 
@@ -258,9 +256,9 @@ console.log("started multi update");
 col.updateMany([
   {
     operation: Operation.AND,
-    conditions: [
-      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
-      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    subConditions: [
+      { index: "index:Hello:ngrams5", queryValues: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", queryValues: ["tesu"], operation: Operation.LT }
     ]
   }
 ], { $set: { intThing: 1 } });
@@ -268,9 +266,9 @@ console.log("ended multi update");
 cursor = col.find([
   {
     operation: Operation.AND,
-    conditions: [
-      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
-      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    subConditions: [
+      { index: "index:Hello:ngrams5", queryValues: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", queryValues: ["tesu"], operation: Operation.LT }
     ]
   }
 ], { columns: ["_id", "intThing"] });
@@ -280,9 +278,9 @@ cursor.close();
 console.log(col.deleteMany([
   {
     operation: Operation.AND,
-    conditions: [
-      { index: "index:Hello:ngrams5", values: ["test"], operation: Operation.GE },
-      { index: "index:Hello:ngrams5", values: ["tesu"], operation: Operation.LT }
+    subConditions: [
+      { index: "index:Hello:ngrams5", queryValues: ["test"], operation: Operation.GE },
+      { index: "index:Hello:ngrams5", queryValues: ["tesu"], operation: Operation.LT }
     ]
   }
 ]));

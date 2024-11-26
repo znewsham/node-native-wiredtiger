@@ -1,4 +1,4 @@
-import { WiredTigerDB as WiredTigerDBNative } from './getModule.js';
+import { Connection } from './getModule.js';
 import { configToString } from './helpers.js';
 import { CreateTypeAndName, VerboseOperations } from './types.js';
 
@@ -33,15 +33,12 @@ type DBConfiguration = {
   verbose?: VerboseOperations[]
 }
 
-export class WiredTigerDB extends WiredTigerDBNative {
-  #config: DBConfiguration | string;
-  #home: string | null;
+export class WiredTigerDB extends Connection {
   #opened?: boolean;
 
-  constructor(home: string | null, config: DBConfiguration | string) {
-    super();
-    this.#home = home;
-    this.#config = config;
+  constructor(home: string, config: DBConfiguration | string) {
+    super(home, configToString(config));
+    this.#opened = true;
   }
 
   get native() {
@@ -52,19 +49,10 @@ export class WiredTigerDB extends WiredTigerDBNative {
     return this.#opened;
   }
 
-  #getConfig() {
-    if (typeof this.#config === "string") {
-      return this.#config;
-    }
-    return configToString(this.#config);
-  }
-
   open() {
     if (this.#opened) {
       return;
     }
-    super.open(this.#home, this.#getConfig());
-    this.#opened = true;
   }
 
   close() {

@@ -5,6 +5,11 @@ mod bindings {
   pub mod table;
   pub mod find_cursor;
   pub mod custom_collator;
+  pub mod custom_extractor;
+  pub mod result_cursor;
+  pub mod wt_item;
+  mod cursor_trait;
+  pub mod types;
   mod utils;
 }
 
@@ -17,10 +22,13 @@ mod glue {
   pub mod find_cursor;
   pub mod table;
   pub mod custom_collator;
+  pub mod custom_extractor;
   mod multi_key_extractor;
+  pub mod cursor_trait;
+  mod multi_cursor;
   mod compound_directional_collator;
   mod index_spec;
-  mod wt_item;
+  pub mod wt_item;
 
   // shared with bindings
   pub mod utils;

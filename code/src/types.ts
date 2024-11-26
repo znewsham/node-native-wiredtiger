@@ -1,16 +1,6 @@
 import { AnySchemaEntry, SupportedTypes } from "./collectionSchema.js";
+import { IndexSpec, Operation } from "./getModule.js";
 
-export enum Operation {
-  EQ,
-  NE,
-  GE,
-  LE,
-  GT,
-  LT,
-  AND,
-  OR,
-  INDEX
-}
 
 type ValueOperations = Operation.EQ | Operation.NE | Operation.GE | Operation.LE | Operation.GT | Operation.LT;
 
@@ -20,7 +10,7 @@ export type VerboseOperations = VerboseOperationTypes | `${VerboseOperationTypes
 type ValueQueryCondition<Values extends any[]> = {
   index?: CreateTypeAndName;
   operation?: ValueOperations;
-  values: Values; // TODO
+  queryValues: Values; // TODO
 }
 type IndexOnlyQueryCondition = {
   index: CreateTypeAndName;
@@ -29,9 +19,9 @@ type IndexOnlyQueryCondition = {
 type ConditionQueryCondition<Values extends any[]> = {
   index?: CreateTypeAndName;
   operation: Operation.AND | Operation.OR;
-  conditions: QueryCondition<Values>[];
+  subConditions: QueryCondition<Values>[];
 }
-export type QueryCondition<Values extends any[]> = ConditionQueryCondition<Values> | ValueQueryCondition<Values> | IndexOnlyQueryCondition;
+export type QueryCondition<Values extends any[]> = IndexSpec & (ConditionQueryCondition<Values> | ValueQueryCondition<Values> | IndexOnlyQueryCondition);
 
 type BasicRecord = {
   [k in string]: string | number | string[] | number[] | BasicRecord | BasicRecord[]

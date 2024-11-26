@@ -1,9 +1,9 @@
 import { ExternalSchema, ColumnSpec, ExternalSchemaInternalSchema, InternalSchema, RawCollectionConfiguration, RemainingSymbol, SchemaConfiguration, SupportedTypes, ProjectedTSchemaOf, UpdateModifier } from "./collectionSchema.js";
 import { WiredTigerDB } from "./db.js";
-import { WiredTigerTable, WiredTigerSession } from "./getModule.js";
+import { Table, Session } from "./getModule.js";
 import { configToString } from "./helpers.js";
 import { FindCursor } from "./findCursor.js";
-import { CreateTypeAndName, FindOptions, FlatFindOptions, IndexColumnOptions, IndexCreationOptions, Operation, QueryCondition } from "./types.js";
+import { CreateTypeAndName, FindOptions, FlatFindOptions, IndexColumnOptions, IndexCreationOptions, QueryCondition } from "./types.js";
 import { BSON } from "bson";
 
 
@@ -16,7 +16,7 @@ export class Collection
   static REMAINING_NAME = "_remaining";
   static DEFAULT_COLUMN_NAME = "value";
 
-  #table?: WiredTigerTable;
+  #table?: Table;
   #db: WiredTigerDB;
   #name: string;
   #created: boolean = false;
@@ -135,7 +135,7 @@ export class Collection
     this.#configString = configString;
   }
 
-  #ensureTable(): asserts this is { _table: WiredTigerTable } {
+  #ensureTable(): asserts this is { _table: Table } {
     if (this.#created) {
       return;
     }
@@ -145,7 +145,7 @@ export class Collection
     //   createdSession = true;
     //   session = this.#db.openSession();
     // }
-    this.#table = new WiredTigerTable(this.#db.native, this.#name, this.#configString);
+    this.#table = new Table(this.#db.native, this.#name, this.#configString);
     // session.create(`table:${this.#name}`, this.#configString);
     // this.#columnGroups.forEach(cg => session.create(`colgroup:${this.#name}:${cg.name}`, `columns=(${cg.columns.join(",")})`));
     // if (createdSession) {
@@ -172,10 +172,9 @@ export class Collection
       direction = directions[0];
     }
     else {
-      console.log(directions);
       direction = 0; // compound per-column direction
     }
-    const keyFormat = columns.map(column => {
+    const keyFormats = columns.map(column => {
       if (typeof column === "string") {
         return this.#columnDefinitionMap.get(column)?.columnFormat;
       }
@@ -183,18 +182,18 @@ export class Collection
         return this.#columnDefinitionMap.get(column.columns[0])?.columnFormat;
       }
       return "S";
-    }).join("");
+    });
     const config = {
       ...options,
       // right now we only support multi key indexes on strings - so we can just default to "S" if it's an object
       // down the road, we'll need to detect what the key is
-      key_format: keyFormat,
-      extractor: "multiKey",
+      key_format: keyFormats.join(""),
+      extractor: "multikey",
       collator: "compound",
       app_metadata: {
         table_value_format: this.#valueDefinitions.map(({ columnFormat }) => columnFormat).join(""),
         key_extract_format: this.#valueDefinitions.map(({ name, readFormat, columnFormat }) => columnSet.has(name) ? readFormat || columnFormat : 'x').join(""),
-        key_format: keyFormat,
+        key_format: `${keyFormats.join("")}${this.#keyDefinition.columnFormat}`,
         // used to share extractors across indexes where possible
         index_id: `${Math.random()}`, // TODO: this should be set to the unique combo of table_value_format (maybe with padding replacing the keys we don't care about?) and the column specs
 
@@ -212,7 +211,8 @@ export class Collection
             {
               columns: column.columns.map(c => this.#columnDefinitionMap.get(c)?.columnIndex),
               ngrams: column.ngrams,
-              direction: column.direction,
+              format: keyFormats[i],
+              direction: column.direction || 0,
               extractor: column.extractor
             }
           ];
@@ -285,19 +285,19 @@ export class Collection
     this.#ensureTable();
     const keyValue = doc[this.#keyDefinition.name];
     this._table.insertMany([
-      [
-        [keyValue],
-        this.#getValuesForInsert(doc)
-      ]
+      {
+        key: [keyValue],
+        value: this.#getValuesForInsert(doc)
+      }
     ]);
   }
 
   insertMany(docs: ESchema[]) {
     this.#ensureTable();
-    this._table.insertMany(docs.map((doc) => [
-      [doc[this.#keyDefinition.name]],
-      this.#getValuesForInsert(doc)
-    ]));
+    this._table.insertMany(docs.map((doc) => ({
+      key: [doc[this.#keyDefinition.name]],
+      value: this.#getValuesForInsert(doc)
+    })));
   }
 
   get db() {

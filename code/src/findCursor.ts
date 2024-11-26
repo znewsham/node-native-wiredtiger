@@ -4,13 +4,13 @@ import { ColumnSpec, SupportedTypes } from "./collectionSchema.js";
 import { FindCursor as NativeFindCursor } from "./getModule.js";
 
 export class FindCursor<TSchema extends object> {
-  #cursor: NativeFindCursor<any, any>;
+  #cursor: NativeFindCursor;
   #valueDefinitions: ColumnSpec[];
   #batch: TSchema[] = [];
   #batchSize = 100;
 
   constructor(
-    cursor: NativeFindCursor<any, any>,
+    cursor: NativeFindCursor,
     valueDefinitions: ColumnSpec[]
   ) {
     this.#cursor = cursor;
@@ -22,9 +22,9 @@ export class FindCursor<TSchema extends object> {
   }
 
   nextBatch(batchSize?: number): TSchema[] {
-    return this.#cursor.nextBatch(batchSize).map(([keyColumns, valueColumns]) => {
+    return this.#cursor.nextBatch(undefined, undefined, batchSize).map(({ key: _keyColumns, value: valueColumns }) => {
       let remaining;
-      const doc = Object.fromEntries(valueColumns.map((value: any, index: number) => {
+      const mapped: ([string, any])[] = valueColumns.map((value: any, index: number): [string, any] | undefined => {
         const vd = this.#valueDefinitions[index];
         if (!vd) {
           throw new Error("Invalid Column");
@@ -37,7 +37,8 @@ export class FindCursor<TSchema extends object> {
           return [vd.name, BSON.deserialize(value)._];
         }
         return [vd.name, value];
-      }).filter(Boolean));
+      }).filter(v => v !== undefined);
+      const doc = Object.fromEntries(mapped);
       if (remaining) {
         Object.entries(remaining).forEach(([key, value]) => doc[key] = value);
       }

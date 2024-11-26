@@ -8,25 +8,125 @@ use crate::external::avcall_helpers::{avcall_extract_fn, avcall_start_int, avcal
 use crate::external::wiredtiger::*;
 
 use super::avcall::populate_av_list_for_packing_unpacking;
-use super::query_value::{Format, QueryValue};
+use super::cursor_trait::InternalCursorTrait;
+use super::query_value::{FieldFormat, Format, QueryValue};
 use super::utils::{char_ptr_to_string, deref_ptr, get_fn, parse_format, unwrap_or_throw, unwrap_string_and_leak};
 use super::error::*;
 
-pub struct InternalWiredTigerCursor {
+
+pub struct InternalCursor {
   // yuck. pub because the session needs it for joining :shrug:
   pub cursor: *mut WT_CURSOR,
   pub key_formats: Vec<Format>,
   pub value_formats: Vec<Format>,
 
   // used to track the joined cursors
-  cursors: Vec<InternalWiredTigerCursor>
+  cursors: Vec<InternalCursor>
 }
 
-impl InternalWiredTigerCursor {
+impl InternalCursorTrait for InternalCursor {
+  fn next(&self) -> Result<bool, GlueError> {
+    let result = self.passthrough(self.get_cursor()?.next);
+    match result {
+      Err(err) => match err.error_domain {
+        ErrorDomain::WIREDTIGER => {
+          if err.wiredtiger_error == WT_NOTFOUND {
+            return Ok(false);
+          }
+          return Err(err);
+        },
+        _ => Err(err)
+      },
+      _ => Ok(true)
+    }
+  }
+
+  fn prev(&self) -> Result<bool, GlueError> {
+    let result = self.passthrough(self.get_cursor()?.prev);
+    match result {
+      Err(err) => match err.error_domain {
+        ErrorDomain::WIREDTIGER => {
+          if err.wiredtiger_error == WT_NOTFOUND {
+            return Ok(false);
+          }
+          return Err(err);
+        },
+        _ => Err(err)
+      },
+      _ => Ok(true)
+    }
+  }
+
+  fn reset(&mut self) -> Result<(), GlueError> {
+    return self.passthrough(self.get_cursor()?.reset);
+  }
+
+  fn close(&mut self) -> Result<(), GlueError> {
+    return self.passthrough(self.get_cursor()?.close);
+  }
+
+  fn get_key(&self) -> Result<Vec<QueryValue>, GlueError> {
+    self.populate_get(self.get_cursor()?.get_key, &self.key_formats)
+  }
+
+  fn get_value(&self) -> Result<Vec<QueryValue>, GlueError> {
+    self.populate_get(self.get_cursor()?.get_value, &self.value_formats)
+  }
+
+
+
+  fn get_key_format(&self) -> Result<String, GlueError> {
+    char_ptr_to_string(self.get_cursor()?.key_format)
+  }
+
+  fn get_value_format(&self) -> Result<String, GlueError> {
+    char_ptr_to_string(self.get_cursor()?.value_format)
+  }
+
+  fn get_key_formats(&self) -> &Vec<Format> {
+    return &self.key_formats;
+  }
+
+  fn get_value_formats(&self) -> &Vec<Format> {
+    return &self.value_formats;
+  }
+
+  fn compare(&self, cursor: &impl InternalCursorTrait) -> Result<i32, GlueError> {
+    let mut compare: i32 = 0;
+    let result = unsafe {
+      get_fn(self.get_cursor()?.compare)?(self.cursor, cursor.get_raw_cursor_ptr(), addr_of_mut!(compare))
+    };
+
+    if result == 0 {
+      return Ok(compare);
+    }
+    Err(GlueError::for_wiredtiger( result))
+  }
+
+  fn equals(&self, cursor: &impl InternalCursorTrait) -> Result<bool, GlueError> {
+    let mut equals: i32 = 0;
+    let result = unsafe {
+      get_fn(self.get_cursor()?.equals)?(self.cursor, cursor.get_raw_cursor_ptr(), addr_of_mut!(equals))
+    };
+
+    if result == 0 {
+      return Ok(equals == 1);
+    }
+    Err(GlueError::for_wiredtiger( result))
+  }
+
+  fn get_raw_cursor_ptr(&self) -> *mut WT_CURSOR {
+    return self.cursor;
+  }
+}
+
+
+
+impl InternalCursor {
   pub fn new(cursor: *mut WT_CURSOR) -> Result<Self, GlueError> {
     let key_formats: Vec<Format> = Vec::new();
     let value_formats: Vec<Format> = Vec::new();
-    let mut internal_cursor = InternalWiredTigerCursor { cursor, key_formats, value_formats, cursors: Vec::new() };
+    let mut internal_cursor = InternalCursor { cursor, key_formats, value_formats, cursors: Vec::new() };
     parse_format(char_ptr_to_string(internal_cursor.get_cursor()?.key_format)?, internal_cursor.key_formats.borrow_mut())?;
     parse_format(char_ptr_to_string(internal_cursor.get_cursor()?.value_format)?, internal_cursor.value_formats.borrow_mut())?;
     Ok(internal_cursor)
@@ -35,7 +135,7 @@ impl InternalWiredTigerCursor {
   pub fn empty() -> Self {
     let key_formats: Vec<Format> = Vec::new();
     let value_formats: Vec<Format> = Vec::new();
-    return InternalWiredTigerCursor { cursor: std::ptr::null_mut(), key_formats, value_formats, cursors: Vec::new() };
+    return InternalCursor { cursor: std::ptr::null_mut(), key_formats, value_formats, cursors: Vec::new() };
   }
 
   fn get_cursor(&self) -> Result<WT_CURSOR, GlueError> {
@@ -125,10 +225,15 @@ impl InternalWiredTigerCursor {
     }
 
     for i in 0..formats.len() {
+      let format = unwrap_or_throw(formats.get(i))?;
+      if format.format == FieldFormat::PADDING {
+        // when setting the key of an index cursor, there will be a padding byte at the end that should be ignored (it represents the row ID)
+        continue;
+      }
       populate_av_list_for_packing_unpacking(
         unwrap_or_throw(values.get_mut(i as usize))?,
         std::ptr::addr_of_mut!(arg_list),
-        unwrap_or_throw(formats.get(i))?,
+        format,
         true
       )?;
     }
@@ -142,16 +247,8 @@ impl InternalWiredTigerCursor {
     self.populate_set(self.get_cursor()?.set_key, values, &self.key_formats)
   }
 
-  pub fn get_key(&self) -> Result<Vec<QueryValue>, GlueError> {
-    self.populate_get(self.get_cursor()?.get_key, &self.key_formats)
-  }
-
   pub fn set_value(&self, values: &mut Vec<QueryValue>) -> Result<(), GlueError> {
     self.populate_set(self.get_cursor()?.set_value, values, &self.value_formats)
-  }
-
-  pub fn get_value(&self) -> Result<Vec<QueryValue>, GlueError> {
-    self.populate_get(self.get_cursor()?.get_value, &self.value_formats)
   }
 
   pub fn insert(&self) -> Result<(), GlueError> {
@@ -164,46 +261,6 @@ impl InternalWiredTigerCursor {
 
   pub fn remove(&self) -> Result<(), GlueError> {
     return self.passthrough(self.get_cursor()?.remove);
-  }
-
-  pub fn next(&self) -> Result<bool, GlueError> {
-    let result = self.passthrough(self.get_cursor()?.next);
-    match result {
-      Err(err) => match err.error_domain {
-        ErrorDomain::WIREDTIGER => {
-          if err.wiredtiger_error == WT_NOTFOUND {
-            return Ok(false);
-          }
-          return Err(err);
-        },
-        _ => Err(err)
-      },
-      _ => Ok(true)
-    }
-  }
-
-  pub fn prev(&self) -> Result<bool, GlueError> {
-    let result = self.passthrough(self.get_cursor()?.prev);
-    match result {
-      Err(err) => match err.error_domain {
-        ErrorDomain::WIREDTIGER => {
-          if err.wiredtiger_error == WT_NOTFOUND {
-            return Ok(false);
-          }
-          return Err(err);
-        },
-        _ => Err(err)
-      },
-      _ => Ok(true)
-    }
-  }
-
-  pub fn reset(&self) -> Result<(), GlueError> {
-    return self.passthrough(self.get_cursor()?.reset);
-  }
-
-  pub fn close(&self) -> Result<(), GlueError> {
-    return self.passthrough(self.get_cursor()?.close);
   }
 
   pub fn search(&self) -> Result<(), GlueError> {
@@ -222,30 +279,6 @@ impl InternalWiredTigerCursor {
     Err(GlueError::for_wiredtiger( result))
   }
 
-  pub fn compare(&self, cursor: &InternalWiredTigerCursor) -> Result<i32, GlueError> {
-    let mut compare: i32 = 0;
-    let result = unsafe {
-      get_fn(self.get_cursor()?.compare)?(self.cursor, cursor.cursor, addr_of_mut!(compare))
-    };
-
-    if result == 0 {
-      return Ok(compare);
-    }
-    Err(GlueError::for_wiredtiger( result))
-  }
-
-  pub fn equals(&self, cursor: &InternalWiredTigerCursor) -> Result<bool, GlueError> {
-    let mut equals: i32 = 0;
-    let result = unsafe {
-      get_fn(self.get_cursor()?.equals)?(self.cursor, cursor.cursor, addr_of_mut!(equals))
-    };
-
-    if result == 0 {
-      return Ok(equals == 1);
-    }
-    Err(GlueError::for_wiredtiger( result))
-  }
-
   pub fn bound(&self, config: String) -> Result<(), GlueError> {
     let result = unsafe {
       // TODO: figure out if this can be dealloc'd or if we need to cache it like we do with set_key at the binding layer
@@ -257,24 +290,7 @@ impl InternalWiredTigerCursor {
     }
     Err(GlueError::for_wiredtiger( result))
   }
-
-  pub fn get_key_format(&self) -> Result<String, GlueError> {
-    char_ptr_to_string(self.get_cursor()?.key_format)
-  }
-
-  pub fn get_value_format(&self) -> Result<String, GlueError> {
-    char_ptr_to_string(self.get_cursor()?.value_format)
-  }
-
-  pub fn get_key_formats(&self) -> &Vec<Format> {
-    return &self.key_formats;
-  }
-
-  pub fn get_value_formats(&self) -> &Vec<Format> {
-    return &self.value_formats;
-  }
-
-  pub fn own_joined_cursor(&mut self, cursor: InternalWiredTigerCursor) -> &mut InternalWiredTigerCursor {
+  pub fn own_joined_cursor(&mut self, cursor: InternalCursor) -> &mut InternalCursor {
     self.cursors.push(cursor);
     return self.cursors.last_mut().unwrap();
   }
