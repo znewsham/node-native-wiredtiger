@@ -1,8 +1,10 @@
 use std::{alloc::{alloc, Layout}, borrow::Borrow, ffi::{CStr, CString}, hash::Hash, mem::ManuallyDrop, os::raw::c_void};
 
+use libc::strlen;
+
 use crate::external::wiredtiger::{size_t, WT_ITEM};
 
-use super::{error::{GlueError, GlueErrorCode}, utils::field_is_wt_item};
+use super::{error::{GlueError, GlueErrorCode}, utils::{field_is_wt_item, unwrap_string_and_dealloc}};
 
 #[non_exhaustive]
 pub struct FieldFormat;
@@ -43,10 +45,8 @@ pub enum ExternalValue {
 }
 
 #[repr(C)]
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum InternalValue {
-  // as of right now CString copies the data out - down the road, we should probably have this be a ManuallyDrop<CStr>
-  StrBox(CString),
   ByteArrayBox(ManuallyDrop<Vec<u8>>),
   UInt(u64),
   None()
@@ -67,9 +67,8 @@ impl ExternalValue {
 pub struct QueryValue {
   read_ptr: u64,
   pub data_type: char,
-  pub no_free: bool,
   wt_item: WT_ITEM,
-  pub external_value: ExternalValue,
+  external_value: ExternalValue,
   pub internal_value: InternalValue
 }
 
@@ -159,12 +158,6 @@ impl Hash for QueryValue {
               state.write_u8(*bbox.get(i).unwrap());
             }
           },
-          InternalValue::StrBox(strbox) => {
-            let bytes = strbox.as_bytes();
-            for i in 0..bytes.len() {
-              state.write_u8(bytes[i]);
-            }
-          },
           InternalValue::UInt(uint) => {
             state.write_u64(*uint);
           }
@@ -193,9 +186,18 @@ impl QueryValue {
     QueryValue {
       read_ptr: 0,
       data_type: 'x',
-      no_free: true,
       wt_item: WT_ITEM::empty(),
       external_value: ExternalValue::None(),
+      internal_value: InternalValue::None()
+    }
+  }
+
+  pub fn for_string(string: String) -> Self {
+    QueryValue {
+      read_ptr: 0,
+      data_type: 'S',
+      wt_item: WT_ITEM::empty(),
+      external_value: ExternalValue::StrBox(unwrap_string_and_dealloc(string)),
       internal_value: InternalValue::None()
     }
   }
@@ -203,20 +205,47 @@ impl QueryValue {
     QueryValue {
       read_ptr: 0,
       data_type: 'x',
-      no_free: true,
       wt_item: WT_ITEM::empty(),
       external_value: ExternalValue::ReferenceInternal(),
       internal_value: InternalValue::None()
     }
   }
 
-  pub fn setup_wt_item_for_write(&mut self) -> Result<*mut WT_ITEM, GlueError> {
+  #[inline(always)]
+  pub fn set_external_byte_array_box(&mut self, bab: Vec<u8>) -> Result<(), GlueError> {
+    self.wt_item.size = bab.len() as u64;
+    self.external_value = ExternalValue::ByteArrayBox(bab);
     self.wt_item.data = self.ptr_or_value()? as *mut c_void;
-    self.wt_item.size = self.get_size()?;
-    Ok(std::ptr::addr_of_mut!(self.wt_item))
+    Ok(())
+  }
+
+  pub fn get_external_value_ref(&self) -> &ExternalValue {
+    return &self.external_value;
+  }
+
+  pub fn get_external_value_mut(&mut self) -> &mut ExternalValue {
+    return &mut self.external_value;
+  }
+
+  pub fn set_external_str_box(&mut self, sb: CString) -> Result<(), GlueError> {
+    self.external_value = ExternalValue::StrBox(sb);
+    Ok(())
+  }
+
+  pub fn set_external_unit(&mut self, uint: u64) -> Result<(), GlueError> {
+    self.external_value = ExternalValue::UInt(uint);
+    Ok(())
+  }
+
+  pub fn set_external_reference(&mut self) -> Result<(), GlueError> {
+    self.external_value = ExternalValue::ReferenceInternal();
+    self.wt_item.size = self.get_size()? as u64;
+    self.wt_item.data = self.ptr_or_value()? as *mut c_void;
+    Ok(())
   }
 
   // this is exclusively used to get the addr of the read_ptr
+  #[inline(always)]
   pub fn get_read_ptr(&mut self, format: &Format) -> *mut u8 {
     if field_is_wt_item(format.format) || format.format == FieldFormat::PADDING {
       return std::ptr::addr_of_mut!(self.wt_item) as *mut u8;
@@ -225,6 +254,7 @@ impl QueryValue {
   }
 
   // this is exclusively used to get the addr of the read_ptr
+  #[inline(always)]
   pub fn get_read_ptr_for_read(&self, format: &Format) -> *const u8 {
     if field_is_wt_item(format.format) || format.format == FieldFormat::PADDING {
       return std::ptr::addr_of!(self.wt_item) as *const u8;
@@ -232,10 +262,15 @@ impl QueryValue {
     return self.read_ptr as *const u8;
   }
 
+  #[inline(always)]
   pub fn finalize_read(&mut self, format: &Format) -> Result<(), GlueError> {
     if field_is_wt_item(format.format) {
       // we need to re-interpret it as a WT_ITEM
-      self.internal_value = InternalValue::ByteArrayBox(ManuallyDrop::new(unsafe { Vec::from_raw_parts(self.wt_item.data as *mut u8, self.wt_item.size as usize, self.wt_item.size as usize) }))
+      self.internal_value = InternalValue::ByteArrayBox(ManuallyDrop::new(unsafe { Vec::from_raw_parts(
+        self.wt_item.data as *mut u8,
+        self.wt_item.size as usize,
+        self.wt_item.size as usize
+      ) }));
     }
     else if format.format == FieldFormat::CHAR_ARRAY {
       self.internal_value = InternalValue::ByteArrayBox(ManuallyDrop::new(unsafe { Vec::from_raw_parts(
@@ -243,10 +278,14 @@ impl QueryValue {
         format.size as usize,
         format.size as usize
       ) }));
-
     }
     else if format.format == FieldFormat::STRING {
-      self.internal_value = InternalValue::StrBox(CString::from(unsafe { CStr::from_ptr(self.read_ptr as *const i8) }))
+      let len = unsafe { strlen(self.read_ptr as *const i8)};
+      self.internal_value = InternalValue::ByteArrayBox(ManuallyDrop::new(unsafe { Vec::from_raw_parts(
+        self.read_ptr as *mut u8,
+        len,
+        len
+      ) }));
     }
     else { // all number types
       self.internal_value = InternalValue::UInt(self.read_ptr as u64);
@@ -254,6 +293,7 @@ impl QueryValue {
     Ok(())
   }
 
+  #[inline(always)]
   pub fn get_size(&self) -> Result<u64, GlueError> {
     match self.external_value.borrow() {
       ExternalValue::StrBox(_b) => Ok(0),
@@ -269,6 +309,15 @@ impl QueryValue {
     }
   }
 
+  #[inline(always)]
+  pub fn ptr_or_value_single(&self, format: &Format) -> Result<*const i8, GlueError> {
+    if field_is_wt_item(format.format) {
+      return Ok(&raw const self.wt_item as *const i8);
+    }
+    return self.ptr_or_value();
+  }
+
+  #[inline(always)]
   pub fn ptr_or_value(&self) -> Result<*const i8, GlueError> {
     match self.external_value.borrow() {
       // the use of *mut is "wrong" here
@@ -278,7 +327,6 @@ impl QueryValue {
       ExternalValue::ReferenceInternal() => {
         match self.internal_value.borrow() {
           InternalValue::ByteArrayBox(b) => Ok(b.as_ptr() as *const i8),
-          InternalValue::StrBox(b) => Ok(b.as_ptr() as *const i8),
           InternalValue::UInt(b) => Ok(*b as *mut i8),
           InternalValue::None() => Err(GlueError::for_glue_with_extra(GlueErrorCode::AccessEmptyBox, " getting ptr or value from internal".to_string()))
         }
@@ -287,13 +335,15 @@ impl QueryValue {
     }
   }
 
-  pub fn get_str(&self) -> Result<&CString, GlueError> {
+  #[inline(always)]
+  pub fn get_str(&self) -> Result<&CStr, GlueError> {
     match self.internal_value.borrow() {
-      InternalValue::StrBox(b) => Ok(b),
+      InternalValue::ByteArrayBox(b) => Ok(unsafe { CStr::from_ptr(b.as_ptr() as *const i8) }),
       _ => Err(GlueError::for_glue_with_extra(GlueErrorCode::AccessEmptyBox, " getting str".to_string()))
     }
   }
 
+  #[inline(always)]
   pub fn get_byte_array(&self) -> Result<&Vec<u8>, GlueError> {
     match self.internal_value.borrow() {
       InternalValue::ByteArrayBox(b) => Ok(b),
@@ -301,6 +351,7 @@ impl QueryValue {
     }
   }
 
+  #[inline(always)]
   pub fn get_uint(&self) -> Result<&u64, GlueError> {
     match self.internal_value.borrow() {
       InternalValue::UInt(b) => Ok(b),
@@ -316,10 +367,6 @@ impl QueryValue {
       InternalValue::None() => Err(GlueError::for_glue_with_extra(GlueErrorCode::AccessEmptyBox, " while copying".to_string())),
       InternalValue::ByteArrayBox(bab) => {
         self.external_value = ExternalValue::ByteArrayBox(bab.clone().to_vec());
-        Ok(())
-      },
-      InternalValue::StrBox(sb) => {
-        self.external_value = ExternalValue::StrBox(sb.clone());
         Ok(())
       },
       InternalValue::UInt(uint) => {

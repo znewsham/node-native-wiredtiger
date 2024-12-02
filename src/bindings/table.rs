@@ -52,7 +52,7 @@ impl Table {
   }
 
   #[napi]
-  pub fn insert_many(&mut self, documents: Vec<Document>) -> Result<i32, Error> {
+  pub fn insert_many(&mut self, env: Env, documents: Vec<Document>) -> Result<i32, Error> {
     let mut converted_documents: Vec<InternalDocument> = Vec::with_capacity(documents.len());
     {
       unwrap_or_error(self.table.init_table_formats())?;
@@ -61,8 +61,8 @@ impl Table {
     let value_formats = unwrap_or_error(self.table.get_value_formats())?;
     for document in documents {
       converted_documents.push(InternalDocument {
-        key: extract_values(document.key, key_formats, false)?,
-        value: extract_values(document.value, value_formats, false)?,
+        key: extract_values(env, document.key, key_formats, false)?,
+        value: extract_values(env, document.value, value_formats, false)?,
       });
     }
     let session = unwrap_or_error(self.connection.open_session(None))?;
@@ -77,7 +77,7 @@ impl Table {
   }
 
   #[napi]
-  pub fn delete_many(&mut self, conditions: Option<Vec<IndexSpec>>) -> Result<i32, Error> {
+  pub fn delete_many(&mut self, env: Env, conditions: Option<Vec<IndexSpec>>) -> Result<i32, Error> {
     let session = unwrap_or_error(self.connection.open_session(None))?;
     let unwrapped = conditions.unwrap_or(Vec::new());
     let index_uris:Vec<String> = (&unwrapped).into_iter()
@@ -88,13 +88,13 @@ impl Table {
     unwrap_or_error(self.table.ensure_index_formats(&session, &index_uris))?;
     let (table_key_format, index_formats) = unwrap_or_error(self.table.get_index_and_key_formats())?;
 
-    let index_specs = parse_index_specs(unwrapped, index_formats, table_key_format)?;
+    let index_specs = parse_index_specs(env, unwrapped, index_formats, table_key_format)?;
 
     return unwrap_or_error(self.table.delete_many(session, index_specs));
   }
 
   #[napi]
-  pub fn update_many(&mut self, conditions: Option<Vec<IndexSpec>>, new_value: Array) -> Result<i32, Error> {
+  pub fn update_many(&mut self, env: Env, conditions: Option<Vec<IndexSpec>>, new_value: Array) -> Result<i32, Error> {
     let session = unwrap_or_error(self.connection.open_session(None))?;
     let unwrapped = conditions.unwrap_or(Vec::new());
     let index_uris:Vec<String> = (&unwrapped).into_iter()
@@ -105,14 +105,14 @@ impl Table {
     unwrap_or_error(self.table.ensure_index_formats(&session, &index_uris))?;
     let (table_key_format, index_formats) = unwrap_or_error(self.table.get_index_and_key_formats())?;
 
-    let index_specs = parse_index_specs(unwrapped, index_formats, table_key_format)?;
+    let index_specs = parse_index_specs(env, unwrapped, index_formats, table_key_format)?;
 
     {
       unwrap_or_error(self.table.init_table_formats())?;
     }
     let value_formats = unwrap_or_error(self.table.get_value_formats())?;
 
-    let mut values = extract_values(new_value, value_formats, true)?;
+    let mut values = extract_values(env, new_value, value_formats, true)?;
     return unwrap_or_error(self.table.update_many(session, index_specs, &mut values));
   }
 
@@ -131,7 +131,7 @@ impl Table {
     unwrap_or_error(self.table.ensure_index_formats(session_ref, &index_uris))?;
     let (table_key_format, index_formats) = unwrap_or_error(self.table.get_index_and_key_formats())?;
 
-    let index_specs = parse_index_specs(unwrapped, index_formats, table_key_format)?;
+    let index_specs = parse_index_specs(env, unwrapped, index_formats, table_key_format)?;
 
     return Ok(FindCursor::new(unwrap_or_error(self.table.find(session_ref, index_specs, unwrapped_options.columns))?, unwrapped_options.key_format, unwrapped_options.value_format)?);
   }

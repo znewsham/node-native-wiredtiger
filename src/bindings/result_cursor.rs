@@ -1,6 +1,5 @@
 use napi::bindgen_prelude::{Array, This};
 use napi::{Env, Error, JsObject, Ref, bindgen_prelude::{ToNapiValue,FromNapiValue}};
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use crate::external::wiredtiger::WT_CURSOR;
@@ -83,8 +82,8 @@ impl ResultCursor {
   }
 
   #[napi]
-  pub fn set_key(&mut self, key_values: Array) -> Result<(), Error> {
-    let mut converted_values = extract_values(key_values, self.cursor.key_formats.borrow(), false)?;
+  pub fn set_key(&mut self, env: Env, key_values: Array) -> Result<(), Error> {
+    let mut converted_values = extract_values(env, key_values, self.cursor.get_key_formats(), false)?;
     unwrap_or_error(self.cursor.set_key(&mut converted_values))?;
     self.stored_key = Some(converted_values);
     Ok(())

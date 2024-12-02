@@ -1,14 +1,16 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fmt::Display;
+use std::ptr::null_mut;
 
 use napi::bindgen_prelude::Array;
-use napi::{Env, Error, JsBigInt, JsBoolean, JsBuffer, JsNumber, JsUnknown, ValueType};
+use napi::sys::napi_create_string_latin1;
+use napi::{Env, Error, JsBigInt, JsBoolean, JsBuffer, JsNumber, JsString, JsUnknown, NapiRaw, NapiValue, ValueType};
 
 use crate::glue::error::*;
 
-use crate::glue::query_value::{ExternalValue, FieldFormat, Format, InternalIndexSpec, Operation, QueryValue};
+use crate::glue::query_value::{FieldFormat, Format, InternalIndexSpec, Operation, QueryValue};
 use crate::external::wiredtiger::wiredtiger_strerror;
 use crate::glue::utils::flip_sign;
 
@@ -43,15 +45,30 @@ pub fn unwrap_or_error<T>(result: Result<T, GlueError>) -> Result<T, Error> {
   }
 }
 
-pub fn unwrap_or_display_error<R, E: Display>(result: Result<R, E>) -> Result<R, Error>{
-  match result {
-    Err(error) => Err(Error::from_reason(format!("{}", error))),
-    Ok(t) => Ok(t)
-  }
+pub fn jsstring_in(env: Env, value: JsString, qv: &mut QueryValue) -> Result<(), Error> {
+  let raw = unsafe { value.raw() };
+  let len = value.latin1_len().unwrap() + 1;
+  let mut written_char_count = 0;
+  let mut v: Vec<u8> = Vec::with_capacity(len);
+  let buf_ptr = v.as_mut_ptr();
+  unsafe {
+    napi::sys::napi_get_value_string_latin1(
+      env.raw(),
+      raw,
+      buf_ptr as *mut i8,
+      len,
+      &mut written_char_count,
+    )
+  };
+  unwrap_or_error(qv.set_external_byte_array_box(v))?;
+  // let cstr = unsafe { CString::from_vec_unchecked(taken.into_vec()) };
+  // let cstr = unwrap_or_display_error(CString::new(casted_value.into_utf8()?.as_str().unwrap()))?;
+
+  // qv.external_value = ExternalValue::StrBox(cstr);
+  Ok(())
 }
 
-
-pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>, Error> {
+pub fn value_in(env: Env, value: JsUnknown, format: &Format) -> Result<Option<QueryValue>, Error> {
   let value_type: ValueType = value.get_type()?;
   let mut qv: QueryValue = QueryValue::empty();
   qv.data_type = format.format;
@@ -66,7 +83,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
       match value_type {
         ValueType::String => {
           let casted_value = value.coerce_to_string()?;
-          let mut padded_cstr: Vec<u8> = casted_value.into_utf8()?.into();
+          let mut padded_cstr: Vec<u8> = casted_value.into_latin1()?.into();
           let missing = format.size as isize - padded_cstr.len() as isize;
           if missing > 0 {
             padded_cstr.reserve_exact(missing as usize);
@@ -75,7 +92,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
             }
           }
 
-          qv.external_value = ExternalValue::ByteArrayBox(padded_cstr);
+          unwrap_or_error(qv.set_external_byte_array_box(padded_cstr))?;
         },
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -83,10 +100,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
     FieldFormat::STRING => {
       match value_type {
         ValueType::String => {
-          let casted_value = value.coerce_to_string()?;
-          let cstr = unwrap_or_display_error(CString::new(casted_value.into_utf8()?.as_str().unwrap()))?;
-
-          qv.external_value = ExternalValue::StrBox(cstr);
+          jsstring_in(env, value.coerce_to_string()?, &mut qv)?;
         },
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -98,7 +112,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
       match value_type {
         ValueType::Number => {
           let casted_value: JsNumber = value.coerce_to_number()?;
-          qv.external_value = ExternalValue::UInt(casted_value.get_int32()? as u64);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_int32()? as u64))?;
         },
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -107,11 +121,11 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
       match value_type {
         ValueType::Number => {
           let casted_value: JsNumber = value.coerce_to_number()?;
-          qv.external_value = ExternalValue::UInt(casted_value.get_uint32()? as u64);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_uint32()? as u64))?;
         },
         ValueType::Boolean => {
           let casted_value: JsBoolean = value.coerce_to_bool()?;
-          qv.external_value = ExternalValue::UInt(casted_value.get_value()? as u64);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_value()? as u64))?;
         }
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -124,7 +138,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
       match value_type {
         ValueType::Number => {
           let casted_value: JsNumber = value.coerce_to_number()?;
-          qv.external_value = ExternalValue::UInt(casted_value.get_uint32()? as u64);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_uint32()? as u64))?;
         },
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -150,7 +164,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
             }
           }
           flip_sign(vec_u8.as_mut(), byte_count, !is_negative);
-          qv.external_value = ExternalValue::ByteArrayBox(vec_u8);
+          unwrap_or_error(qv.set_external_byte_array_box(vec_u8))?;
         },
         ValueType::Number => {
           let casted_value: JsNumber = value.coerce_to_number()?;
@@ -158,7 +172,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
           let mut double_bytes = double.to_be_bytes();
           let positive = double_bytes[0] & 0x80 != 0x80;
           flip_sign(double_bytes.as_mut(), 8, positive);
-          qv.external_value = ExternalValue::ByteArrayBox(double_bytes.into());
+          unwrap_or_error(qv.set_external_byte_array_box(double_bytes.into()))?;
         },
         _ => {
           if value.is_buffer().unwrap() {
@@ -168,7 +182,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
 
             // In some cases (e.g., insertMany) where there is no control loss between calls - we can probably avoid a buffer copy
             // In fact, even with that loss (e.g., set_key -> insert) it seems to work - but my guess is this isn't guaranteed
-            qv.external_value = ExternalValue::copy_byte_array(buf2);
+            unwrap_or_error(qv.set_external_byte_array_box(buf2.to_vec()))?;
           }
           else {
             return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
@@ -182,11 +196,11 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
       match value_type {
         ValueType::Number => {
           let casted_value = value.coerce_to_number()?;
-          qv.external_value = ExternalValue::UInt(casted_value.get_int64()? as u64);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_int64()? as u64))?;
         },
         ValueType::BigInt => {
           let casted_value = unsafe { value.cast::<JsBigInt>() };
-          qv.external_value = ExternalValue::UInt(casted_value.get_u64()?.0);
+          unwrap_or_error(qv.set_external_unit(casted_value.get_u64()?.0 as u64))?;
         }
         _ => return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidDataForFormat, format!("format={}, data type={}", format.format, value_type))))
       }
@@ -198,7 +212,7 @@ pub fn value_in(value: JsUnknown, format: &Format) -> Result<Option<QueryValue>,
   Ok(Some(qv))
 }
 
-pub fn extract_values(values: Array, formats: &Vec<Format>, include_padding: bool) -> Result<Vec<QueryValue>, Error> {
+pub fn extract_values(env: Env, values: Array, formats: &Vec<Format>, include_padding: bool) -> Result<Vec<QueryValue>, Error> {
   let mut converted: Vec<QueryValue> = vec![];
   if values.len() as usize != formats.len() {
     return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidLength, format!("Length {} is invalid for format size {}", values.len(), formats.len()).to_string())));
@@ -207,6 +221,7 @@ pub fn extract_values(values: Array, formats: &Vec<Format>, include_padding: boo
   for i in 0..values.len() {
     let item: Option<JsUnknown> = values.get(i)?;
     let qv = value_in(
+      env,
       item.unwrap(),
       formats.get(i as usize).unwrap()
     )?;
@@ -227,22 +242,90 @@ pub fn extract_values(values: Array, formats: &Vec<Format>, include_padding: boo
   return Ok(converted);
 }
 
+pub fn values_vec_from_jsstring(env: Env, value: JsString) -> Result<Vec<QueryValue>, Error> {
+  let mut converted: Vec<QueryValue> = Vec::with_capacity(1);
+  let mut qv = QueryValue::empty();
+  jsstring_in(env, value, &mut qv)?;
+  converted.push(qv);
+  Ok(converted)
+}
+
+pub fn extract_values_vec(env: Env, values: Vec<JsUnknown>, formats: &Vec<Format>, include_padding: bool) -> Result<Vec<QueryValue>, Error> {
+  let mut converted: Vec<QueryValue> = Vec::with_capacity(values.len() as usize);
+  if values.len() as usize != formats.len() {
+    return Err(error_from_glue_error(GlueError::for_glue_with_extra(GlueErrorCode::InvalidLength, format!("Length {} is invalid for format size {}", values.len(), formats.len()).to_string())));
+  }
+  let mut seen_padding = false;
+  let mut i = 0;
+  for item in values {
+    let qv = value_in(
+      env,
+      item,
+      formats.get(i as usize).unwrap()
+    )?;
+    if qv.is_some() {
+      converted.push(qv.unwrap());
+    }
+    else if include_padding == true {
+      converted.push(QueryValue::empty());
+    }
+    else if seen_padding == true {
+      return Err(Error::from_reason("Can't have a padding field in the middle of the format"));
+    }
+    else {
+      seen_padding = true;
+    }
+    i+=1;
+  }
+  return Ok(converted);
+}
+
+#[napi(object)]
+pub struct Times {
+  pub extract: u32,
+  pub populate: u32
+}
+
+
+pub fn latin_string_from_bytes(env: Env, chars: &[u8]) -> Result<JsString, Error> {
+  let mut raw_value = null_mut();
+  let mut len = chars.len();
+  if chars[0] == 0 {
+    len = 0;
+  }
+  else {
+    for i in (0..chars.len()).rev() {
+      if chars[i] != 0 {
+        len = i + 1;
+        break;
+      }
+    }
+  }
+
+  (unsafe {
+    napi_create_string_latin1(
+      env.raw(),
+      chars.as_ptr() as *const _,
+      len,
+      &mut raw_value,
+    )
+  });
+  Ok(unsafe { JsString::from_raw_unchecked(env.raw(), raw_value) })
+}
+
 pub fn value_out(env: Env, value: &QueryValue, format: &Format) -> Result<JsUnknown, Error> {
   match format.format {
     FieldFormat::STRING => {
-      let str = unwrap_or_error(value.get_str())?;
-      Ok(env.create_string(str.to_str().unwrap())?.into_unknown())
+      let str = unwrap_or_error(value.get_byte_array())?;
+      Ok(env.create_string_latin1(str)?.into_unknown())
     },
     FieldFormat::CHAR_ARRAY => {
-      let bytes = unwrap_or_error(value.get_byte_array())?;
-      // TODO: this feels wrong - presumably
-      let mut str_bytes = bytes.clone();
-      str_bytes.push(0);
+      let bytes: &Vec<u8> = unwrap_or_error(value.get_byte_array())?;
 
-      // let cstr = unsafe { CStr::from_bytes_with_nul_unchecked(&str_bytes) }.to_str().unwrap();
+
       // return Ok(env.create_string("char array")?.into_unknown());
-      let res = CString::from(CStr::from_bytes_until_nul(&str_bytes).unwrap());
-      return Ok(env.create_string(res.to_str().unwrap())?.into_unknown());
+      // let res = CString::from(CStr::from_bytes_until_nul(&str_bytes).unwrap());
+      return Ok(latin_string_from_bytes(env, bytes)?.into_unknown());
     },
     FieldFormat::INT
     | FieldFormat::INT2
@@ -328,6 +411,19 @@ pub fn populate_values(env: Env, values: Vec<QueryValue>, formats: &Vec<Format>)
   return Ok(values_out);
 }
 
+pub fn populate_values_vec(env: Env, values: Vec<QueryValue>, formats: &Vec<Format>) -> Result<Vec<JsUnknown>, Error> {
+  let mut values_out: Vec<JsUnknown> = Vec::with_capacity(values.len());
+  for i in 0..values.len() {
+    let item: &QueryValue = values.get(i).unwrap();
+    values_out.push(value_out(
+      env,
+      item,
+      formats.get(i as usize).unwrap()
+    )?);
+  }
+  return Ok(values_out);
+}
+
 
 #[napi(object)]
 pub struct IndexSpec {
@@ -337,7 +433,7 @@ pub struct IndexSpec {
   pub query_values: Option<Array>
 }
 
-pub fn parse_index_specs(index_specs: Vec<IndexSpec>, index_formats: &HashMap<String, Vec<Format>>, table_key_format: &Vec<Format>) -> Result<Vec<InternalIndexSpec>, Error> {
+pub fn parse_index_specs(env: Env, index_specs: Vec<IndexSpec>, index_formats: &HashMap<String, Vec<Format>>, table_key_format: &Vec<Format>) -> Result<Vec<InternalIndexSpec>, Error> {
   let mut converted_specs:Vec<InternalIndexSpec> = Vec::with_capacity(index_specs.len());
   for index_spec in index_specs {
     let index_name = match index_spec.index_name.borrow() {
@@ -348,7 +444,7 @@ pub fn parse_index_specs(index_specs: Vec<IndexSpec>, index_formats: &HashMap<St
       index_name: index_spec.index_name,
       operation: index_spec.operation,
       sub_conditions: match index_spec.sub_conditions {
-        Some(sub) => Some(parse_index_specs(sub, index_formats, table_key_format)?),
+        Some(sub) => Some(parse_index_specs(env, sub, index_formats, table_key_format)?),
         None => None
       },
       query_values: match index_spec.query_values {
@@ -369,7 +465,7 @@ pub fn parse_index_specs(index_specs: Vec<IndexSpec>, index_formats: &HashMap<St
               }
             }
           }
-          Some(extract_values(values, formats, false)?)
+          Some(extract_values(env, values, formats, false)?)
         },
         None => None
       }

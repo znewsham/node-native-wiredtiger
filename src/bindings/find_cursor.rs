@@ -1,5 +1,5 @@
 use napi::bindgen_prelude::Array;
-use napi::{Env, Error, JsObject};
+use napi::{Env, Error};
 use crate::glue::cursor_trait::InternalCursorTrait;
 use crate::glue::find_cursor::InternalFindCursor;
 use crate::glue::query_value::Format;
@@ -131,12 +131,12 @@ impl FindCursor {
     return self.get_next_prev(env, key_format_str, value_format_str, result);
   }
 
-  #[napi(js_name="getKey")]
+  #[napi]
   pub fn _get_key(&self, env: Env, format_str: Option<String>) -> Result<Array, Error> {
     return self.get_key(env, format_str);
   }
 
-  #[napi(js_name="getValue")]
+  #[napi]
   pub fn _get_value(&self, env: Env, format_str: Option<String>) -> Result<Array, Error> {
     return self.get_value(env, format_str);
   }

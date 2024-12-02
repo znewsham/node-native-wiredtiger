@@ -45,6 +45,7 @@ impl<'l> InternalFindCursor {
       if next.unwrap() == false {
         break;
       }
+      // TODO: I think this is wrong? Seems we'd need to finalise the data for this to work in all situations? E.g., in case it's paged to disk
       docs.push(InternalDocument {
         key: self.get_key()?,
         value: self.get_value()?

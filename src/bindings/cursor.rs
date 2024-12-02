@@ -71,8 +71,8 @@ impl Cursor {
   }
 
   #[napi]
-  pub fn set_key(&mut self, key_values: Array) -> Result<(), Error> {
-    let mut converted_values = extract_values(key_values, self.cursor.key_formats.borrow(), false)?;
+  pub fn set_key(&mut self, env: Env, key_values: Array) -> Result<(), Error> {
+    let mut converted_values = extract_values(env, key_values, self.cursor.get_key_formats(), false)?;
     unwrap_or_error(self.cursor.set_key(&mut converted_values))?;
     self.stored_key = Some(converted_values);
     Ok(())
@@ -84,8 +84,8 @@ impl Cursor {
   }
 
   #[napi]
-  pub fn set_value(&mut self, value_values: Array) -> Result<(), Error> {
-    let mut converted_values = extract_values(value_values, self.cursor.value_formats.borrow(), false)?;
+  pub fn set_value(&mut self, env: Env, value_values: Array) -> Result<(), Error> {
+    let mut converted_values = extract_values(env, value_values, self.cursor.get_value_formats(), false)?;
     unwrap_or_error(self.cursor.set_value(&mut converted_values))?;
     self.stored_value = Some(converted_values);
     Ok(())
@@ -112,7 +112,7 @@ impl Cursor {
   }
 
   #[napi]
-  pub fn search(&self) -> Result<(), Error> {
+  pub fn search(&self) -> Result<bool, Error> {
     return unwrap_or_error(self.cursor.search());
   }
 

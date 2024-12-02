@@ -19,6 +19,10 @@ export interface Document {
   key: unknown[]
   value: unknown[]
 }
+export interface Times {
+  extract: number
+  populate: number
+}
 export interface IndexSpec {
   indexName?: string
   operation: Operation
@@ -67,7 +71,7 @@ export declare class Cursor {
   insert(): void
   update(): void
   remove(): void
-  search(): void
+  search(): boolean
   searchNear(): number
   compare(cursor: Cursor): number
   equals(cursor: Cursor): boolean
@@ -112,4 +116,17 @@ export declare class ResultCursor {
   insert(): void
   searchNear(): number
   get keyFormat(): string
+}
+export declare class MapTable {
+  constructor(connection: Connection, tableName: string, config: string)
+  list(prefix: Array<unknown>): Array<Array<unknown>>
+  get(key: Array<unknown>): Array<unknown> | null
+  set(key: Array<unknown>, value: Array<unknown>): void
+  delete(key: Array<unknown>): boolean
+  /** A helper function - returns an error if the key_format != "S" or the value_format != "S" */
+  getStringString(key: string): string | null
+  /** A helper function - returns an error if the key_format != "S" or the value_format != "S" */
+  setStringString(key: string, value: string): void
+  /** A helper function - returns an error if the key_format != "S" */
+  deleteString(key: string): boolean
 }

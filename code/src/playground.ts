@@ -2,7 +2,7 @@ import { makeid } from "../tests/raw/utils.js";
 import { Collection } from "./collection.js";
 import { RemainingSymbol, schema } from "./collectionSchema.js";
 import { WiredTigerDB } from "./db.js";
-import { Session, Operation } from "./getModule.js";
+import { Session, Operation, MapTable } from "./getModule.js";
 
 
 let db = new WiredTigerDB("WT-HOME", { in_memory: true, create: true, statistics: ["all"] });
@@ -240,6 +240,7 @@ console.log("Finished file read");
 //   count++;
 // }
 // console.log("Found: ", count);
+
 let cursor = col.find([
   {
     operation: Operation.AND,

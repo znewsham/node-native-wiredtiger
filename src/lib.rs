@@ -10,6 +10,7 @@ mod bindings {
   pub mod wt_item;
   mod cursor_trait;
   pub mod types;
+  pub mod map_table;
   mod utils;
 }
 

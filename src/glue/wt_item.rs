@@ -1,7 +1,7 @@
 use crate::{external::{avcall::{av_alist, avcall_arg_ptr, avcall_arg_uint, avcall_call}, avcall_helpers::{avcall_extract_fn, avcall_start_int}, wiredtiger::{wiredtiger_struct_unpack, WT_CONFIG_ITEM, WT_ITEM, WT_SESSION}}, glue::error::GlueErrorCode};
 use std::{os::raw::c_void, ptr::{addr_of_mut, null_mut}};
 
-use super::{avcall::populate_av_list_for_packing_unpacking, error::GlueError, query_value::{Format, QueryValue}};
+use super::{avcall::populate_av_list_for_unpacking, error::GlueError, query_value::{Format, QueryValue}};
 
 
 
@@ -52,11 +52,10 @@ pub fn unpack_wt_item(
     avcall_arg_ptr(arg_list_ptr, cleaned_format as *mut c_void);
   }
   for i in 0..formats.len(){
-    populate_av_list_for_packing_unpacking(
+    populate_av_list_for_unpacking(
       query_values.get_mut(i).unwrap(),
       arg_list_ptr,
-      formats.get(i).unwrap(),
-      false
+      formats.get(i).unwrap()
     )?;
   }
 

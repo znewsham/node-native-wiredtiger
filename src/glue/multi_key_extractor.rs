@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr::{addr_of_mut, null_mut};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -10,7 +10,7 @@ use crate::external::avcall_helpers::{avcall_extract_fn, avcall_start_void};
 use crate::external::wiredtiger::*;
 use crate::glue::query_value::InternalValue;
 
-use super::avcall::populate_av_list_for_packing_unpacking;
+use super::avcall::populate_av_list_for_packing;
 use super::error::GlueError;
 use super::query_value::{ExternalValue, Format, QueryValue};
 use super::utils::{char_ptr_of_length_to_string, extract_ngrams_for_string, extract_words_for_string, get_fn, get_mandatory_string, get_mandatory_string_trim_ends, get_optional_string, parse_format, unwrap_string_and_dealloc};
@@ -89,7 +89,7 @@ impl InternalWiredTigerMultiKeyExtractor {
     multikeys: &Vec<Vec<CString>>,
     write_index: usize,
     multikey_index: usize,
-    mut temp_values: Vec<QueryValue>// intentionally *NOT* a ptr or ref
+    temp_values: Vec<QueryValue>// intentionally *NOT* a ptr or ref
   ) -> Result<i32, GlueError> {
     if write_index == self.column_configs.len() {
 
@@ -102,13 +102,12 @@ impl InternalWiredTigerMultiKeyExtractor {
       );
       unsafe { avcall_arg_ptr(set_value_list_ptr, result_cursor as *mut c_void) };
       for i in 0..temp_values.len() {
-        let value = temp_values.get_mut(i).unwrap();
+        let value = temp_values.get(i).unwrap();
         let format: Format = Format { format: value.data_type, size: 0 };
-        populate_av_list_for_packing_unpacking(
+        populate_av_list_for_packing(
           value,
           set_value_list_ptr,
-          &format,
-          true
+          &format
         )?;
       }
       unsafe { avcall_call(set_value_list_ptr) };
@@ -126,7 +125,7 @@ impl InternalWiredTigerMultiKeyExtractor {
       for key in keys {
         let mut new_temp_values: Vec<QueryValue> = temp_values.clone();
         let mut qv: QueryValue = QueryValue::empty();
-        qv.external_value = ExternalValue::StrBox(key.clone());
+        qv.set_external_str_box(key.clone())?;
         qv.data_type = column.format.format;
         new_temp_values.push(qv);
         let error = self.recurse_custom_fields(
@@ -187,9 +186,9 @@ impl InternalWiredTigerMultiKeyExtractor {
         for index  in column_config.columns.iter() {
           let value = value_values.get((*index) as usize).unwrap();
           match &value.internal_value {
-            InternalValue::StrBox(str) => {
+            InternalValue::ByteArrayBox(bab) => {
               extract_ngrams_for_string(
-                str.as_c_str(),
+                unsafe { CStr::from_ptr(bab.as_ptr() as *const i8) },
                 column_config.ngrams as usize,
                 &mut column_ngrams
               );
@@ -203,7 +202,7 @@ impl InternalWiredTigerMultiKeyExtractor {
         let mut column_words: Vec<CString> = Vec::new();
         for index  in column_config.columns.iter() {
           let value = value_values.get((*index) as usize).unwrap();
-          match &value.external_value {
+          match &value.get_external_value_ref() {
             ExternalValue::StrBox(str) => {
               extract_words_for_string(
                 str.as_c_str(),
@@ -220,13 +219,10 @@ impl InternalWiredTigerMultiKeyExtractor {
         let value = value_values.get_mut(*index as usize).unwrap();
         match &value.internal_value {
           InternalValue::ByteArrayBox(_bab) => {
-            value.external_value = ExternalValue::ReferenceInternal();
-          },
-          InternalValue::StrBox(_strb) => {
-            value.external_value = ExternalValue::ReferenceInternal();
+            value.set_external_reference()?;
           },
           InternalValue::UInt(uint) => {
-            value.external_value = ExternalValue::UInt(*uint);
+            value.set_external_unit(*uint)?;
           },
           InternalValue::None() => {
             println!("Should throw an error");
@@ -260,11 +256,10 @@ impl InternalWiredTigerMultiKeyExtractor {
       unsafe { avcall_arg_ptr(set_value_list_ptr, wt_result_cursor as *mut c_void) };
       for column_config in self.column_configs.iter() {
         let index = column_config.columns.get(0).unwrap();
-        populate_av_list_for_packing_unpacking(
-          value_values.get_mut((*index) as usize).unwrap(),
+        populate_av_list_for_packing(
+          value_values.get((*index) as usize).unwrap(),
           set_value_list_ptr,
-          &column_config.format,
-          true
+          &column_config.format
         )?;
       }
       unsafe { avcall_call(set_value_list_ptr) };

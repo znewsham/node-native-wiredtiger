@@ -68,6 +68,7 @@ function test() {
   // table.createIndex("compound", "key_format=uu,columns=(doubleValue,bigIntValue),collator=compound,app_metadata={table_value_format=SSuu,key_format=uu,key_extract_format=xxuu,index_id=test,columns=2,column0={direction=1,format=u},column1={direction=1,format=u}}");
   table.createIndex("compoundstr", "key_format=SS,columns=(value1,value2),collator=compound,app_metadata={table_value_format=SSuu,key_format=SS17s,key_extract_format=SSxx,index_id=test,columns=2,column0={direction=1,format=S},column1={direction=-1,format=S}}");
 
+  console.log("STARTED FIND");
   let next;
   const findCursor1 = table.find([
     {
@@ -81,6 +82,7 @@ function test() {
       queryValues: ["Hem", ""]
     }
   ]);
+  console.log("ENDED FIND");
   while (next = findCursor1.next()) {
     console.log(findCursor1.getKey(), findCursor1.getValue("SSdz"));
   }

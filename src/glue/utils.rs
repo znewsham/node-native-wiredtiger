@@ -3,6 +3,7 @@ use crate::external::wiredtiger::{__wt_config_item_WT_CONFIG_ITEM_TYPE_WT_CONFIG
 
 use super::{error::*, query_value::{FieldFormat, Format}};
 
+#[inline(always)]
 pub fn get_fn<T>(fn_prop: Option<T>) -> Result<T, GlueError> {
   match fn_prop {
     Some(r#fn) => Ok(r#fn),
@@ -212,6 +213,7 @@ pub fn deref_ptr<T:Copy>(thing: *mut T) -> Result<T, GlueError> {
 // pub fn field_is_ptr(field: char) -> bool {
 //   return field == FieldFormat::WT_ITEM || field == FieldFormat::WT_UITEM || field == FieldFormat::WT_ITEM_DOUBLE || field == FieldFormat::WT_ITEM_BIGINT || field == FieldFormat::CHAR_ARRAY || field == FieldFormat::STRING;
 // }
+#[inline(always)]
 pub fn field_is_wt_item(field: char) -> bool {
   return field == FieldFormat::WT_ITEM || field == FieldFormat::WT_UITEM || field == FieldFormat::WT_ITEM_DOUBLE || field == FieldFormat::WT_ITEM_BIGINT;
 }

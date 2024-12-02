@@ -39,10 +39,10 @@ fn cursor_for_index_spec(
   }
 
   if index_spec.query_values.is_some() {
-    let mut query_values = index_spec.query_values.clone().unwrap();
+    let query_values = index_spec.query_values.as_ref().unwrap();
     if query_values.len() != 0 {
       let cursor = session.open_cursor(match index_spec.index_name.clone() { Some(index_name) => index_name, None => table_cursor_uri.to_string() }, Some("".to_string()))?;
-      cursor.set_key(&mut query_values)?;
+      cursor.set_key(&query_values)?;
 
       // yuck - assignments of an if
       let exact: i32 = if index_spec.index_name.as_ref().is_some_and(|index_name| { index_name.starts_with("i")} && (index_spec.operation == Operation::EQ || index_spec.operation == Operation::INDEX)) {

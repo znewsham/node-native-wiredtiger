@@ -7,7 +7,7 @@ use std::ffi::CString;
 use super::cursor_trait::InternalCursorTrait;
 use super::find_cursor::InternalFindCursor;
 use super::multi_cursor::MultiCursor;
-use super::query_value::{ExternalValue, Format, InternalDocument, InternalIndexSpec, InternalValue, QueryValue};
+use super::query_value::{Format, InternalDocument, InternalIndexSpec, QueryValue};
 use super::session::InternalSession;
 use super::utils::extract_formats_from_config;
 use super::error::*;
@@ -42,10 +42,6 @@ impl InternalTable {
       return Ok(());
     }
     return extract_formats_from_config(self.config.to_string(), &mut self.key_formats, &mut self.value_formats);
-  }
-
-  pub fn get_name(&self) -> &String {
-    return &self.table_name;
   }
 
   fn init_table(&mut self, session: &InternalSession) -> Result<(), GlueError> {
@@ -101,13 +97,10 @@ impl InternalTable {
       }
       let qv = qvs.get_mut(0).unwrap();
       qv.data_type = 'S';
-      qv.external_value = ExternalValue::StrBox(CString::new(index_uri.to_string()).unwrap());
+      qv.set_external_str_box(CString::new(index_uri.to_string()).unwrap())?;
       metadata_cursor.set_key(&mut qvs)?;
       metadata_cursor.search()?;
-      let index_config = match &metadata_cursor.get_value()?.get(0).unwrap().internal_value {
-        InternalValue::StrBox(str) => (**str).to_str().unwrap().to_string(),
-        _ => return Err(GlueError::for_glue(GlueErrorCode::AccessEmptyBox))
-      };
+      let index_config = metadata_cursor.get_value()?.get(0).unwrap().get_str()?.to_str().unwrap().to_string();
       let mut key_formats:Vec<Format> = Vec::new();
       let mut value_formats:Vec<Format> = Vec::new();
       extract_formats_from_config(index_config, &mut key_formats, &mut value_formats)?;
@@ -148,7 +141,7 @@ impl InternalTable {
     while cursor.next()? {
       let mut key = cursor.get_key()?;
       for k in key.iter_mut() {
-        k.external_value = ExternalValue::ReferenceInternal();
+        k.set_external_reference()?;
       }
       delete_cursor.set_key(&mut key)?;
       delete_cursor.remove()?;
@@ -168,7 +161,7 @@ impl InternalTable {
       let mut key = cursor.get_key()?;
       let existing = cursor.get_value()?;
       for k in key.iter_mut() {
-        k.external_value = ExternalValue::ReferenceInternal();
+        k.set_external_reference()?;
       }
       update_cursor.set_key(&mut key)?;
 
@@ -177,7 +170,7 @@ impl InternalTable {
         let value_existing = existing.get(i).unwrap();
         if value_in.data_type == 'x' {
           value_in.internal_value = value_existing.internal_value.clone();
-          value_in.external_value = ExternalValue::ReferenceInternal();
+          value_in.set_external_reference()?;
         }
       }
       update_cursor.set_value(value)?;
